@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Claude Code / IDE local state
+.claude/
+
+# Runtime fixbuddy logs (written to $HOME/.fixbuddy by default)
+.fixbuddy/
+
+# Session scratch notes
+NEW_SESSION_PROMPT.md

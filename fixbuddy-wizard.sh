@@ -79,7 +79,7 @@ ok "gh authenticated"
 
 # -------- Step 2: repo --------
 step "2." "Which GitHub repo has the issues?"
-note "example: Codevena/Flashbuddy"
+note "example: vercel/next.js"
 ask "Repo (owner/name):"
 read -r REPO
 REPO="${REPO## }"; REPO="${REPO%% }"

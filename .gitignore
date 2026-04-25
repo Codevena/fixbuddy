@@ -4,8 +4,13 @@
 # Claude Code / IDE local state
 .claude/
 
+# Local environment files
+.env
+.env.*
+
 # Runtime fixbuddy logs (written to $HOME/.fixbuddy by default)
 .fixbuddy/
 
-# Session scratch notes
-NEW_SESSION_PROMPT.md
+# Local scratch notes
+*.local.md
+NOTES.md

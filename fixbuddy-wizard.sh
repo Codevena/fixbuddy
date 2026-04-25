@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy-wizard.sh v0.3.1 — beginner-friendly launcher for fixbuddy.sh
+# fixbuddy-wizard.sh v0.3.2 — beginner-friendly launcher for fixbuddy.sh
 #
 # Walks a user through the required flags via interactive prompts, validates
 # prerequisites, shows a preview of the exact command, and then exec's fixbuddy.sh.
@@ -17,9 +17,9 @@ fi
 # -------- Colors (disabled if output isn't a TTY) --------
 if [ -t 1 ]; then
   BOLD=$'\033[1m' DIM=$'\033[2m' RED=$'\033[31m' GRN=$'\033[32m'
-  YEL=$'\033[33m' BLU=$'\033[34m' MAG=$'\033[35m' RST=$'\033[0m'
+  BLU=$'\033[34m' MAG=$'\033[35m' RST=$'\033[0m'
 else
-  BOLD="" DIM="" RED="" GRN="" YEL="" BLU="" MAG="" RST=""
+  BOLD="" DIM="" RED="" GRN="" BLU="" MAG="" RST=""
 fi
 
 step() { printf "\n${BOLD}%s${RST} %s\n" "$1" "$2"; }
@@ -32,8 +32,8 @@ printf "%s" "${MAG}${BOLD}"
 cat <<'EOF'
 
   ╔═══════════════════════════════════════════════════╗
-  ║              fixbuddy wizard v0.3.1                ║
-  ║   Turn GitHub audit issues into merged PRs         ║
+  ║              fixbuddy wizard v0.3.2                ║
+  ║   Turn GitHub issues into reviewed PRs             ║
   ╚═══════════════════════════════════════════════════╝
 EOF
 printf "%s" "${RST}"
@@ -68,7 +68,7 @@ if [ "${#AGENTS_AVAILABLE[@]}" -eq 0 ]; then
 fi
 
 if [ "$missing" -eq 1 ]; then
-  printf "\n${RED}Install the missing tools and re-run.${RST}\n" >&2
+  printf "\n%sInstall the missing tools and re-run.%s\n" "$RED" "$RST" >&2
   exit 1
 fi
 if ! gh auth status >/dev/null 2>&1; then
@@ -113,8 +113,8 @@ fi
 # expand it inside a quoted string either — surface a clear error instead of a confusing
 # "not a git repository" downstream.
 case "$PROJECT" in
-  "~"|"~/"*) PROJECT="${HOME}${PROJECT#\~}" ;;
-  "~"*)      fail "~username paths are not supported — please use an absolute path or ~/…"; exit 1 ;;
+  \~|\~/*) PROJECT="${HOME}${PROJECT#\~}" ;;
+  \~*)     fail "~username paths are not supported — please use an absolute path or ~/…"; exit 1 ;;
 esac
 if [ -z "$PROJECT" ] || [ ! -d "$PROJECT/.git" ]; then
   fail "\"$PROJECT\" is not a git repository"
@@ -126,7 +126,7 @@ ok "$PROJECT"
 step "4." "Which severity to target?"
 cat <<EOF
   [1] critical   (most urgent — recommended first pass)
-  [2] high       (typical pre-launch cleanup)
+  [2] high       (typical release cleanup)
   [3] medium
   [4] low
   [5] all severities
@@ -257,12 +257,12 @@ CMD+=(--yes)
 # -------- Preview --------
 step "8." "Ready. fixbuddy will run this command:"
 printf "\n"
-printf "    ${DIM}"
+printf "    %s" "$DIM"
 for arg in "${CMD[@]}"; do
   # shell-escape each arg so the preview is copy-pasteable
   printf "%q " "$arg"
 done
-printf "${RST}\n\n"
+printf "%s\n\n" "$RST"
 
 ask "Start now? [y/N]:"
 read -r go

@@ -1,4 +1,4 @@
-# fixbuddy
+# Fixbuddy
 
 **A Bash orchestrator that turns GitHub issues into reviewed pull requests using two AI coding agents.**
 

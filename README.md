@@ -2,7 +2,6 @@
 
 **A Bash orchestrator that turns GitHub issues into reviewed pull requests using two AI coding agents.**
 
-[![version](https://img.shields.io/badge/version-0.3.2-blue.svg)](#)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![shell](https://img.shields.io/badge/shell-bash-black.svg)](fixbuddy.sh)
 [![agents](https://img.shields.io/badge/agents-claude%20%7C%20codex%20%7C%20opencode%20%7C%20gemini-purple.svg)](#supported-agents)

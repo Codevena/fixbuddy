@@ -28,6 +28,24 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 
 ## Quick Start
 
+Install with the one-liner (macOS and Linux, including WSL2):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.3.2/install.sh | bash
+```
+
+This downloads the pinned `v0.3.2` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+
+Then run:
+
+```bash
+fixbuddy-wizard.sh
+```
+
+### Developer install
+
+To modify the scripts, clone the repository instead:
+
 ```bash
 git clone <your-fork-or-upstream-url> fixbuddy
 cd fixbuddy

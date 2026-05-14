@@ -1,0 +1,31 @@
+name: fixbuddy action smoke test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'action.yml'
+      - 'fixbuddy.sh'
+      - 'fixbuddy-wizard.sh'
+      - '.github/workflows/action-smoke.yml'
+
+jobs:
+  dry-run:
+    name: Dry-run wrapper smoke test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run fixbuddy (dry-run)
+        uses: ./
+        with:
+          dry-run: "true"
+          max: "1"
+        # No agent CLI is installed here on purpose: --dry-run only lists target
+        # issues and never invokes an agent, so this exercises the wrapper's input
+        # parsing, command construction, and exit codes without real API keys.

@@ -1,0 +1,123 @@
+name: fixbuddy
+description: Turn GitHub issues into reviewed PRs using two AI coding agents
+author: Codevena
+branding:
+  icon: git-pull-request
+  color: purple
+
+inputs:
+  repo:
+    description: "owner/repo to process (defaults to the current repository)"
+    required: false
+    default: ${{ github.repository }}
+  project-path:
+    description: "Local checkout path of the target repository"
+    required: false
+    default: "."
+  fix-agent:
+    description: "Fix agent: claude | codex | opencode | gemini"
+    required: false
+    default: "claude"
+  review-agent:
+    description: "Review agent: claude | codex | opencode | gemini"
+    required: false
+    default: "codex"
+  severity:
+    description: "Only process issues labeled severity:<level>"
+    required: false
+    default: ""
+  label:
+    description: "Only process issues with this label (comma-separated for multiple)"
+    required: false
+    default: ""
+  max:
+    description: "Maximum issues to process per run"
+    required: false
+    default: "5"
+  base-branch:
+    description: "PR base branch (auto-detected when empty)"
+    required: false
+    default: ""
+  auto-merge:
+    description: "Request auto-merge after review approval"
+    required: false
+    default: "true"
+  dry-run:
+    description: "List target issues only, make no changes"
+    required: false
+    default: "false"
+  github-token:
+    description: "Token with contents:write, pull-requests:write, issues:write"
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run fixbuddy
+      shell: bash
+      # Inputs are passed through env vars rather than interpolated directly into the
+      # script body — this keeps untrusted input out of the shell parser (no script
+      # injection via crafted input values).
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        FIXBUDDY_REPO: ${{ inputs.repo }}
+        FIXBUDDY_PROJECT: ${{ inputs.project-path }}
+        FIXBUDDY_FIX_AGENT: ${{ inputs.fix-agent }}
+        FIXBUDDY_REVIEW_AGENT: ${{ inputs.review-agent }}
+        FIXBUDDY_SEVERITY: ${{ inputs.severity }}
+        FIXBUDDY_LABEL: ${{ inputs.label }}
+        FIXBUDDY_MAX: ${{ inputs.max }}
+        FIXBUDDY_BASE: ${{ inputs.base-branch }}
+        FIXBUDDY_AUTO_MERGE: ${{ inputs.auto-merge }}
+        FIXBUDDY_DRY_RUN: ${{ inputs.dry-run }}
+        FIXBUDDY_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${GH_TOKEN:-}" ]; then
+          echo "::error::github-token is empty — pass a token with contents:write, pull-requests:write, issues:write." >&2
+          exit 1
+        fi
+
+        cmd=("$FIXBUDDY_ACTION_PATH/fixbuddy.sh"
+          --repo "$FIXBUDDY_REPO"
+          --project "$FIXBUDDY_PROJECT"
+          --fix-agent "$FIXBUDDY_FIX_AGENT"
+          --review-agent "$FIXBUDDY_REVIEW_AGENT"
+          --max "$FIXBUDDY_MAX"
+          --yes)
+
+        if [ -n "$FIXBUDDY_SEVERITY" ]; then cmd+=(--severity "$FIXBUDDY_SEVERITY"); fi
+        if [ -n "$FIXBUDDY_BASE" ]; then cmd+=(--base "$FIXBUDDY_BASE"); fi
+        if [ "$FIXBUDDY_AUTO_MERGE" = "false" ]; then cmd+=(--no-auto-merge); fi
+        if [ "$FIXBUDDY_DRY_RUN" = "true" ]; then cmd+=(--dry-run); fi
+
+        # Comma-separated labels become repeated --label flags. Each entry is
+        # whitespace-trimmed so "bug, enhancement" works.
+        if [ -n "$FIXBUDDY_LABEL" ]; then
+          IFS=',' read -ra _labels <<< "$FIXBUDDY_LABEL"
+          for _l in "${_labels[@]}"; do
+            _l="${_l#"${_l%%[![:space:]]*}"}"
+            _l="${_l%"${_l##*[![:space:]]}"}"
+            if [ -n "$_l" ]; then cmd+=(--label "$_l"); fi
+          done
+        fi
+
+        "${cmd[@]}"
+
+    - name: Collect logs
+      if: always()
+      shell: bash
+      # fixbuddy writes per-run logs under ~/.fixbuddy/runs, which vanish when the runner
+      # is torn down. Copy them into the workspace so the consumer's workflow can pick
+      # them up with actions/upload-artifact if it wants to.
+      env:
+        FIXBUDDY_WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        if [ -d "$HOME/.fixbuddy/runs" ]; then
+          mkdir -p "$FIXBUDDY_WORKSPACE/fixbuddy-logs"
+          cp -R "$HOME/.fixbuddy/runs/." "$FIXBUDDY_WORKSPACE/fixbuddy-logs/" 2>/dev/null || true
+          echo "fixbuddy logs copied to fixbuddy-logs/ — add an actions/upload-artifact step to keep them."
+        fi

@@ -31,10 +31,10 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 Install with the one-liner (macOS and Linux, including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.3.2/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.4.0/install.sh | bash
 ```
 
-This downloads the pinned `v0.3.2` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+This downloads the pinned `v0.4.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
 
 Then run:
 
@@ -178,6 +178,97 @@ Use Gemini as a read-only reviewer:
   --fix-agent claude --review-agent gemini
 ```
 
+## Use in GitHub Actions
+
+fixbuddy ships a composite action, so you can run the pipeline from a workflow with a single `uses:` line.
+
+```yaml
+name: fixbuddy
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'   # every Monday 06:00 UTC
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Prerequisites in CI — runners do not ship the agent CLIs. See the note below.
+      - name: Install agent CLIs
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          npm install -g @openai/codex
+
+      - uses: Codevena/fixbuddy@v1
+        with:
+          severity: high
+          max: "5"
+          fix-agent: claude
+          review-agent: codex
+
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixbuddy-logs
+          path: fixbuddy-logs/
+          if-no-files-found: ignore
+```
+
+### Permissions
+
+The action drives `gh` with the workflow token, which needs more than the default read-only scopes. Set this exact block on the job (or workflow):
+
+```yaml
+permissions:
+  contents: write        # push fix/issue-N branches
+  pull-requests: write   # open PRs, request auto-merge
+  issues: write          # manage fix:* labels
+```
+
+If `github-token` is empty the action fails fast with a clear error. Pass a different token through the `github-token` input when you need broader scope (for example a PAT for cross-repo runs).
+
+### Prerequisites in CI
+
+GitHub-hosted runners do **not** ship the agent CLIs (`claude`, `codex`, `opencode`, `gemini`). Install whichever ones you pass to `fix-agent` / `review-agent` in a step *before* the `Codevena/fixbuddy` step — pinning them to a known version is recommended. Consult each agent's own documentation for the current install command.
+
+The action does not read API keys itself; each agent CLI reads its own environment variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and so on). Provide them from `secrets` at the job or workflow level, as shown above.
+
+The action does **not** run `actions/checkout` for you — your workflow controls the checkout. fixbuddy refuses to run against a dirty working tree, but a fresh CI checkout is always clean, so this is a non-issue in practice.
+
+A `dry-run: "true"` input lists target issues without invoking any agent — useful for a first run, and it needs no API keys or agent CLIs at all.
+
+### Logs
+
+The action copies each run's logs into `fixbuddy-logs/` in the workspace. Add an `actions/upload-artifact` step (see the snippet) to keep them after the runner is torn down.
+
+### Inputs
+
+| Input | Maps to | Default |
+| --- | --- | --- |
+| `repo` | `--repo` | current repository |
+| `project-path` | `--project` | `.` |
+| `fix-agent` | `--fix-agent` | `claude` |
+| `review-agent` | `--review-agent` | `codex` |
+| `severity` | `--severity` | none |
+| `label` | `--label` (comma-separated, becomes repeated flags) | none |
+| `max` | `--max` | `5` |
+| `base-branch` | `--base` | auto-detect |
+| `auto-merge` | `--no-auto-merge` when `false` | `true` |
+| `dry-run` | `--dry-run` when `true` | `false` |
+| `github-token` | `GH_TOKEN` for `gh` | `${{ github.token }}` |
+
+Running fixbuddy in CI gives AI agents repository write access through whatever token you hand them. Read [SECURITY.md](SECURITY.md) before enabling this on a repository that matters.
+
 ## FAQ
 
 **Does fixbuddy touch the base branch directly?**
@@ -190,7 +281,7 @@ The PR remains open with `fix:pr-open`. GitHub will merge it later if branch pro
 The PR stays open. The issue keeps `fix:pr-open`, so a later fixbuddy run does not create a duplicate PR.
 
 **Can I use fixbuddy in GitHub Actions?**
-Yes, but the runner must have `gh`, `jq`, `git`, and the selected agent CLIs installed and authenticated. Review the security model before giving agents repository write access in CI.
+Yes — use the composite action with `uses: Codevena/fixbuddy@v1`. See [Use in GitHub Actions](#use-in-github-actions) for the workflow snippet, required `permissions:` block, and CI prerequisites.
 
 **Does it support Windows?**
 Native Windows is not tested. WSL2 is the recommended Windows environment.
@@ -198,7 +289,6 @@ Native Windows is not tested. WSL2 is the recommended Windows environment.
 ## Roadmap
 
 - Config file support
-- GitHub Action wrapper
 - More deterministic integration tests with mocked CLIs
 - Optional notifications for run summaries
 - Explicit resume mode for interrupted runs

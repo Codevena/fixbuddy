@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy v0.3.2 — two-agent pipeline for autonomous issue fixing
+# fixbuddy v0.4.0 — two-agent pipeline for autonomous issue fixing
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -35,7 +35,7 @@
 #   --yes, -y                 Skip confirmation
 
 set -uo pipefail
-VERSION="0.3.2"
+VERSION="0.4.0"
 
 # -------- Defaults --------
 REPO=""
@@ -95,22 +95,34 @@ done
 [ -d "$PROJECT" ] || { err "project path does not exist: $PROJECT"; exit 2; }
 [ -d "$PROJECT/.git" ] || { err "not a git repo: $PROJECT"; exit 2; }
 
+# Agent names are always validated. The CLI *presence* check is skipped under --dry-run:
+# a dry run only lists target issues and never invokes an agent, so requiring the agent
+# CLIs to be installed would needlessly block previews (and the CI smoke test, which runs
+# dry-run on a runner without any agent CLI installed).
 for agent in "$FIX_AGENT" "$REVIEW_AGENT"; do
   case "$agent" in
-    claude)   command -v claude   >/dev/null || { err "claude CLI not found";   exit 2; } ;;
-    codex)    command -v codex    >/dev/null || { err "codex CLI not found";    exit 2; } ;;
-    opencode) command -v opencode >/dev/null || { err "opencode CLI not found"; exit 2; } ;;
-    gemini)   command -v gemini   >/dev/null || { err "gemini CLI not found";   exit 2; } ;;
+    claude|codex|opencode|gemini) ;;
     *) err "unsupported agent: $agent (valid: claude, codex, opencode, gemini)"; exit 2 ;;
   esac
 done
 
-# Gemini is less reliable at independent reasoning than claude/codex/opencode — when used
-# as the fix-agent it sometimes commits incomplete patches. We allow it (user's choice)
-# but nudge toward using it read-only (verify/review) where it's much safer.
-if [ "$FIX_AGENT" = "gemini" ]; then
-  warn "gemini as fix-agent is experimental — it may produce incomplete or wrong fixes."
-  warn "Consider --fix-agent claude (or codex/opencode) with --review-agent gemini instead."
+if ! $DRY_RUN; then
+  for agent in "$FIX_AGENT" "$REVIEW_AGENT"; do
+    case "$agent" in
+      claude)   command -v claude   >/dev/null || { err "claude CLI not found";   exit 2; } ;;
+      codex)    command -v codex    >/dev/null || { err "codex CLI not found";    exit 2; } ;;
+      opencode) command -v opencode >/dev/null || { err "opencode CLI not found"; exit 2; } ;;
+      gemini)   command -v gemini   >/dev/null || { err "gemini CLI not found";   exit 2; } ;;
+    esac
+  done
+
+  # Gemini is less reliable at independent reasoning than claude/codex/opencode — when used
+  # as the fix-agent it sometimes commits incomplete patches. We allow it (user's choice)
+  # but nudge toward using it read-only (verify/review) where it's much safer.
+  if [ "$FIX_AGENT" = "gemini" ]; then
+    warn "gemini as fix-agent is experimental — it may produce incomplete or wrong fixes."
+    warn "Consider --fix-agent claude (or codex/opencode) with --review-agent gemini instead."
+  fi
 fi
 
 command -v gh >/dev/null || { err "gh CLI not found"; exit 2; }

@@ -1,65 +1,15 @@
-# Next session — P2 #7 (install.sh) and #8 (GitHub Action wrapper)
+# Next session — P2 #8 (GitHub Action wrapper)
 
-P0/P1 from the external review and P2 #6 (repo topics) are done. The two remaining P2 items both ship distribution: a `curl | bash` installer and a GitHub Action wrapper.
-
-They are **independent** — #7 stands alone, #8 stands alone. Pick either or do both. #7 is the quick win, #8 is the bigger growth lever.
+P0/P1 from the external review, P2 #6 (repo topics), and P2 #7 (`install.sh`) are done. The one remaining P2 item is the GitHub Action wrapper — the bigger growth lever.
 
 ## Status snapshot
 
-- Branch `main`, working tree clean.
-- Both scripts pass `bash -n` and `shellcheck` cleanly.
+- Branch `main`, working tree clean. Latest commit `d04a4eb`.
+- **`v0.3.2` is tagged and pushed** — annotated tag at `d04a4eb`, the first tagged release. It contains `fixbuddy.sh`, `fixbuddy-wizard.sh`, `install.sh`, and `SHA256SUMS`.
+- `install.sh` (P2 #7) shipped: `curl | bash` installer, pure bash, macOS (bash 3.2) + Linux/WSL2. Pins to `DEFAULT_REF="v0.3.2"`. README Quick Start leads with the one-liner. Verified end-to-end against the live tag — checksum path works.
+- `SHA256SUMS` at repo root holds hashes of `fixbuddy.sh` + `fixbuddy-wizard.sh`. **Regenerate it (`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh > SHA256SUMS`) whenever either script changes, before cutting a new tag**, or `install.sh` checksum verification will fail closed.
 - Repo topics live on GitHub: `ai`, `automation`, `bash`, `claude`, `codex`, `devops`, `github-actions`, `issue-automation`.
-- No release tag exists yet. The script declares `VERSION="0.3.2"` in its header. **#7 and #8 both want a tag to pin to** — cut one before merging either feature.
-- Definition-of-Done gate from `~/.claude/CLAUDE.md` still applies: static checks (`bash -n` + `shellcheck`), then OpenCode reviewer + Claude reviewer must both return `VERDICT: PASS` with zero CRITICAL/WARN. (Last session, `codex exec` hung at 0% CPU — the eval-newline-serialization bug — so OpenCode was used. Same fallback applies here.)
-
----
-
-## #7 — `install.sh` for `curl | bash` distribution
-
-**Goal:** one-liner install for users who already have `gh`, `jq`, `bash`.
-
-### Deliverables
-
-1. New file `install.sh` at repo root, pure bash, macOS + Linux compatible (no GNU-isms — assume only POSIX-ish `mktemp`, `chmod`, `mkdir`, `curl`, `uname`).
-2. README updates:
-   - Add the one-liner to the Quick Start section, **above** the `git clone` instructions (curl is the easier path for users who aren't planning to modify the script).
-   - Keep the git-clone path as the "developer" install.
-
-### Behavior
-
-The script must:
-
-1. **Detect destination.** Prefer `~/.local/bin` if it exists OR if `~/.local/bin` is in `$PATH`. Otherwise fall back to `/usr/local/bin`. If `/usr/local/bin` is not writable, re-exec with `sudo` (after explicit confirm: `Install to /usr/local/bin requires sudo. Continue? [y/N]`). Allow `--prefix PATH` to override.
-2. **Pin to a release tag.** Default install ref is the latest released tag (`gh release view --json tagName --jq .tagName` is the cleanest probe, but the installer cannot assume `gh` exists on the user's machine — so fetch `https://api.github.com/repos/Codevena/fixbuddy/releases/latest` and `jq` the tag, OR hard-code a `DEFAULT_REF` constant in the installer and bump it per release). Allow `--ref TAG` override; `--ref main` for the bleeding edge.
-3. **Download and validate.** Curl the two scripts (`fixbuddy.sh`, `fixbuddy-wizard.sh`) into `mktemp -d`. Validate each starts with `#!/usr/bin/env bash` before installing (rejects HTML error pages, partial downloads). If a `SHA256SUMS` exists at the same tag, verify hashes against it; if not, warn but continue.
-4. **Install atomically.** `mv` into destination only after both files are downloaded + validated, so a partial failure doesn't leave a half-installed state.
-5. **`chmod +x` both files.**
-6. **Confirm and hint.** Print `Installed fixbuddy <VERSION> to <DEST>.` and `Run: fixbuddy-wizard.sh` (or `fixbuddy-wizard` if symlinked sans extension — decide whether to install with or without `.sh` suffix; without is friendlier on `$PATH` but breaks parity with the repo layout. Keep the `.sh` suffix unless the user wants otherwise).
-
-### Edge cases to handle
-
-- `curl` not installed → fail with a clear message naming `curl` as the missing prereq. `wget` is a possible fallback but adds complexity; ship with `curl` only.
-- Destination on `$PATH` check: if the chosen destination isn't in `$PATH`, print a one-liner to add it to the user's shell rc.
-- Re-install: don't refuse to overwrite — print "Updating from <old> to <new>" and proceed.
-- `~/.local/bin` exists but isn't on `$PATH` → still pick it (it's the conventional XDG location), but warn.
-- Test on macOS (zsh default) AND Linux (bash) before merging. WSL2 is "Linux."
-
-### Verification before commit
-
-```bash
-shellcheck install.sh
-bash -n install.sh
-# Smoke test in a temp directory:
-mkdir -p /tmp/install-test/bin
-PATH=/tmp/install-test/bin:$PATH ./install.sh --prefix /tmp/install-test/bin --ref main
-/tmp/install-test/bin/fixbuddy.sh --version
-```
-
-### Things to think hard about
-
-- **Tag pinning.** The cleanest path is: cut `v0.3.2` as the first release tag, hard-code `DEFAULT_REF="v0.3.2"` in the installer, and bump it on every release. The dynamic-API-lookup alternative adds a network round-trip and a `jq` dependency just to discover the tag — not worth it for v1 of the installer.
-- **Don't ship a one-liner that points at `main`.** That's how users get broken installs the day after a bad commit lands. The README one-liner must point at a tag.
-- **No `--dangerously-skip-permissions`-style flags in the installer.** Keep the installer boring; the agent scripts are the powerful piece.
+- Definition-of-Done gate from `~/.claude/CLAUDE.md` still applies: static checks (`bash -n` + `shellcheck`), then Codex reviewer + Claude reviewer must both return `VERDICT: PASS` with zero CRITICAL/WARN. (Note: last `install.sh` session, `codex exec` worked fine — the prior 0% CPU hang did not recur. If it hangs again, use the OpenCode fallback documented in CLAUDE.md.)
 
 ---
 
@@ -159,7 +109,7 @@ runs:
    - (a) Document the prerequisite: users must add a setup step in their workflow that installs the CLI before invoking the action. Cleanest, keeps the action small.
    - (b) Add an `install-agent: true` input that the action handles. Adds complexity, brittle (each CLI has a different install path).
    - (c) Provide a sibling `Codevena/fixbuddy-setup` action that installs CLIs. Splits the surface area sensibly.
-   
+
    **Recommend (a) for v1.** Document clearly in README and add `## Prerequisites in CI` block. Users typically pin agent CLIs to specific versions anyway.
 
 2. **API keys / credentials.** Anthropic / OpenAI keys must come from `secrets`. The action does NOT read them directly — agent CLIs read their own env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). The action's job is to make sure those env vars are exported. Document this in README: users set env on the step or workflow level, the action inherits them.
@@ -171,7 +121,7 @@ runs:
 5. **Log surfacing.** `fixbuddy.sh` writes logs to `~/.fixbuddy/runs/...`. In CI those vanish when the runner shuts down. The action should:
    - At end of run, copy logs to `${{ github.workspace }}/fixbuddy-logs/` so consumers can `actions/upload-artifact` them.
    - OR add an `upload-logs: true` input that does the artifact upload itself.
-   
+
    **Recommend (a)** — keeps the action's surface area small, lets consumers choose whether to ship logs.
 
 6. **PR comments and issue updates are CI-side.** This is fine — `gh` calls go through `GH_TOKEN` and CI is a normal authenticated client. No special handling needed.
@@ -212,27 +162,18 @@ The smoke test is intentionally minimal. It catches regressions in the action wr
 
 Once `action.yml` lands and the smoke test passes:
 
-1. Cut `v0.4.0` release tag.
-2. Create floating `v1` ref: `git tag -f v1 v0.4.0 && git push origin v1 --force` (this is the one place a force-push is correct — floating major refs are explicitly designed to move).
-3. Update README to show `uses: Codevena/fixbuddy@v1`.
-4. Verify in a fresh test repo: drop a workflow that calls the action, dispatch it manually, confirm it runs.
+1. Regenerate `SHA256SUMS` if `fixbuddy.sh` / `fixbuddy-wizard.sh` changed, bump `install.sh` `DEFAULT_REF` and the README one-liner to the new tag.
+2. Cut `v0.4.0` release tag.
+3. Create floating `v1` ref: `git tag -f v1 v0.4.0 && git push origin v1 --force` (this is the one place a force-push is correct — floating major refs are explicitly designed to move).
+4. Update README to show `uses: Codevena/fixbuddy@v1`.
+5. Verify in a fresh test repo: drop a workflow that calls the action, dispatch it manually, confirm it runs.
 
 ### Verification before commit
 
 For each file:
 - `shellcheck` any inline bash in `action.yml` (extract and validate separately if needed)
 - For workflow YAMLs, run `gh workflow view` or rely on GitHub's parser on push
-- Run the full code-quality gate from CLAUDE.md (OpenCode + Claude reviewers)
-
----
-
-## Suggested ordering
-
-1. **First:** cut a `v0.3.2` release tag from current `main` (`8e11650`). Both #7 and #8 depend on having a tag to pin to.
-2. **Then:** #7 (`install.sh`) — independent quick win, gets the curl-pipe path live.
-3. **Then:** #8 (Action wrapper) — bigger, but unlocks viral distribution.
-
-If only doing one in this session: **#7**. It's contained, ships value immediately, and gives you a tagged release in passing.
+- Run the full code-quality gate from CLAUDE.md (Codex + Claude reviewers)
 
 ---
 
@@ -240,5 +181,6 @@ If only doing one in this session: **#7**. It's contained, ships value immediate
 
 - `fixbuddy.sh` top-of-file comment block: canonical CLI option list. If `action.yml` inputs drift from CLI flags, fix the script's CLI surface first, then the action.
 - `fixbuddy-wizard.sh`: friendly-prompt wrapper. Its agent-choice copy is a good source for `action.yml` input descriptions.
+- `install.sh`: the curl-pipe installer shipped in #7 — useful reference for the project's bash style and the DoD gate workflow.
 - `SECURITY.md`: already documents the trust model. README's Action section should reference it and remind users that CI agents run with whatever token permissions they're handed.
 - Repo topics are now: `ai, automation, bash, claude, codex, devops, github-actions, issue-automation` — adjust if the Action wrapper changes the positioning enough to warrant it.

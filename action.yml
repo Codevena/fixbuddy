@@ -80,6 +80,11 @@ runs:
           exit 1
         fi
 
+        # Configure git to use GH_TOKEN as a credential helper so that plain
+        # "git push" calls inside fixbuddy.sh are authenticated (gh CLI already
+        # picks up GH_TOKEN via the env, but git itself needs this extra step).
+        gh auth setup-git
+
         cmd=("$FIXBUDDY_ACTION_PATH/fixbuddy.sh"
           --repo "$FIXBUDDY_REPO"
           --project "$FIXBUDDY_PROJECT"

@@ -104,10 +104,64 @@ These agent invocations are intentionally powerful. Run fixbuddy only against re
 | `--agent-timeout <secs>` | Wall-clock timeout per agent call | `1200` |
 | `--crash-abort <n>` | Abort after consecutive agent crashes | `3` |
 | `--base <branch>` | PR base branch | auto-detect |
+| `--issue <N>` | Process only this issue number. Repeatable; dedup filters and `--label`/`--severity` still apply. Warns for requested numbers that are not found, closed, or already labeled non-actionable | none |
+| `--check-cmd <cmd>` | Shell command to run as a test gate after each fix commit and before review. Repeatable. A non-zero exit is treated as a review rejection: output is fed back to the fix agent and the attempt is retried; if the retry budget is exhausted the issue is labeled `fix:rejected`. Because review and PR are only reached after all checks pass, checks also gate auto-merge. Commands run in `$PROJECT` and are operator-trusted (same trust level as CLI flags) | none |
+| `--auto-merge` | Enable auto-merge, overriding a config `auto_merge = false` | off |
 | `--no-auto-merge` | Open PRs without requesting auto-merge | off |
 | `--skip-label <label>` | Skip issues with this label | `fix:applied` |
-| `--dry-run` | List target issues without changing anything | off |
+| `--dry-run` | List issues that would be processed, with the planned config, without making any changes (no labels created, no issues edited) | off |
 | `-y`, `--yes` | Skip confirmation | off |
+
+## Configuration file
+
+fixbuddy reads `key = value` config files (blank lines and `#` comments ignored) from two locations, applied in precedence order from lowest to highest:
+
+1. `~/.fixbuddy/config` — global defaults applied to every run
+2. `./.fixbuddy.conf` — per-project config in the current working directory (the common case is running fixbuddy from the repo root)
+3. CLI flags — always win over any config value
+
+**Format example:**
+
+```ini
+# .fixbuddy.conf
+repo        = owner/repo
+project     = /home/user/code/repo
+fix_agent   = claude
+review_agent = codex
+max         = 10
+severity    = high
+auto_merge  = true
+label       = bug
+check_cmd   = pnpm test
+check_cmd   = pnpm typecheck
+```
+
+**Allowlisted keys** (unknown keys warn and are ignored):
+
+| Key | Equivalent flag | Notes |
+| --- | --- | --- |
+| `repo` | `--repo` | |
+| `project` | `--project` | |
+| `fix_agent` | `--fix-agent` | |
+| `review_agent` | `--review-agent` | |
+| `max` | `--max` | |
+| `max_retries` | `--max-retries` | |
+| `agent_timeout` | `--agent-timeout` | |
+| `crash_abort` | `--crash-abort` | |
+| `base` | `--base` | |
+| `severity` | `--severity` | |
+| `skip_label` | `--skip-label` | |
+| `auto_merge` | `--auto-merge` / `--no-auto-merge` | accepts `true` or `false` |
+| `label` | `--label` | additive (see below) |
+| `check_cmd` | `--check-cmd` | additive (see below) |
+
+**Scalar keys** (all keys except `label` and `check_cmd`): CLI value wins; last writer wins across config files (project overrides global).
+
+**Additive keys** (`label`, `check_cmd`): config entries and CLI entries are combined, not replaced. A config `label = bug` plus `--label security` on the CLI results in an AND filter for both labels. There is no way to remove a config-provided label or check command from the CLI.
+
+**Security note:** config files are operator-controlled and parsed without `eval` or `source`. Values are assigned as plain strings, so a config containing shell metacharacters (e.g. `$(...)`) cannot execute code. `check_cmd` entries are run by fixbuddy itself, consistent with the same operator-trust model as CLI flags — only issue *content* is treated as untrusted input.
+
+**Wizard:** running `fixbuddy-wizard.sh` offers to save the collected settings to `./.fixbuddy.conf` at the end. The absolute path written is printed, and a warning is shown if the current directory differs from `--project`, since fixbuddy reads the project config from wherever it is launched.
 
 ## Labels
 
@@ -150,10 +204,24 @@ Useful markers:
 
 ## Examples
 
-Preview targets:
+Preview targets (no writes at all — no labels created, no issues edited):
 
 ```bash
 ./fixbuddy.sh --repo owner/repo --project ~/code/repo --severity high --dry-run
+```
+
+Fix specific issues only:
+
+```bash
+./fixbuddy.sh --repo owner/repo --project ~/code/repo --issue 42 --issue 57
+```
+
+Add a test gate so fixes are never reviewed unless all checks pass:
+
+```bash
+./fixbuddy.sh --repo owner/repo --project ~/code/repo \
+  --check-cmd 'pnpm test' --check-cmd 'pnpm typecheck' \
+  --fix-agent claude --review-agent codex
 ```
 
 Open PRs but do not request auto-merge:
@@ -245,7 +313,7 @@ The action does not read API keys itself; each agent CLI reads its own environme
 
 The action does **not** run `actions/checkout` for you — your workflow controls the checkout. fixbuddy refuses to run against a dirty working tree, but a fresh CI checkout is always clean, so this is a non-issue in practice.
 
-A `dry-run: "true"` input lists target issues without invoking any agent — useful for a first run, and it needs no API keys or agent CLIs at all.
+A `dry-run: "true"` input lists target issues (with the planned config) without invoking any agent and without making any changes — useful for a first run, and it needs no API keys or agent CLIs at all.
 
 ### Logs
 
@@ -263,8 +331,8 @@ The action copies each run's logs into `fixbuddy-logs/` in the workspace. Add an
 | `label` | `--label` (comma-separated, becomes repeated flags) | none |
 | `max` | `--max` | `5` |
 | `base-branch` | `--base` | auto-detect |
-| `auto-merge` | `--no-auto-merge` when `false` | `true` |
-| `dry-run` | `--dry-run` when `true` | `false` |
+| `auto-merge` | `--no-auto-merge` when `false`; `--auto-merge` when `true` | `true` |
+| `dry-run` | `--dry-run` when `true` — lists targets, makes no changes | `false` |
 | `github-token` | `GH_TOKEN` for `gh` | `${{ github.token }}` |
 
 Running fixbuddy in CI gives AI agents repository write access through whatever token you hand them. Read [SECURITY.md](SECURITY.md) before enabling this on a repository that matters.
@@ -288,10 +356,9 @@ Native Windows is not tested. WSL2 is the recommended Windows environment.
 
 ## Roadmap
 
-- Config file support
 - More deterministic integration tests with mocked CLIs
 - Optional notifications for run summaries
-- Explicit resume mode for interrupted runs
+- Explicit resume mode for interrupted runs (interrupting a run cleans up the in-progress branch; the issue is retried automatically on the next run)
 
 ## Contributing
 

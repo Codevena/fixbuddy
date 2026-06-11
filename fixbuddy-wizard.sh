@@ -325,7 +325,7 @@ case "$save_ans" in
       # Warn when CWD differs from the chosen project directory, because
       # fixbuddy reads .fixbuddy.conf from wherever it is launched.
       if [ "$(pwd)" != "$PROJECT" ]; then
-        printf "  ${RED}!${RST} Config is in launch dir, not project dir.\n"
+        printf "  %s!%s Config is in launch dir, not project dir.\n" "$RED" "$RST"
         note "Run fixbuddy from $(pwd), or move .fixbuddy.conf into $PROJECT"
       fi
       note "Next time you can just run: fixbuddy.sh"

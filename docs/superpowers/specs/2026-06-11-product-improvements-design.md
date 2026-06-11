@@ -54,14 +54,17 @@ fix:pr-open unstick scan (`186-221`, `gh issue edit --remove-label`). README/act
 **Design.**
 - New repeatable flag `--issue N` → `ISSUES+=("$2")`. Validate each value as a positive integer
   in the validation block (alongside the W3 numeric checks): non-numeric → `err` + exit 2.
-- In the fetch/filter stage, when `ISSUES` is non-empty, restrict `filtered` to those numbers by
-  passing a JSON array into jq and adding `and (.number as $n | $wanted | index($n))` to the
-  existing select. The dedup filters (`fix:applied`, `fix:pr-open`, `fix:needs-human`,
-  `fix:rejected`, `fix:false-positive`, umbrella/meta) **remain active**.
-- After filtering, diff the requested numbers against the actionable set and `warn` for each
-  requested issue that was not found / not actionable (e.g. already `fix:applied`, closed, or
-  filtered out), so a silent skip never looks like success.
-- `--issue` composes with `--label`/`--severity` as an additional AND constraint.
+- When `ISSUES` is non-empty, **fetch each requested issue directly** (`gh issue view N --repo
+  "$REPO" --json number,title,labels,url,state,body`) instead of relying on the 200-item
+  `gh issue list` page (`224`). This guarantees a requested issue outside the first list page is
+  never silently missed (Codex NICE-TO-HAVE). Assemble these into the same JSON shape the loop
+  consumes.
+- The dedup filters (`fix:applied`, `fix:pr-open`, `fix:needs-human`, `fix:rejected`,
+  `fix:false-positive`, umbrella/meta) **remain active** on the directly-fetched issues, and
+  `--label`/`--severity` still apply as additional AND constraints.
+- For each requested number, `warn` distinctly when it is not found (no such issue / not in
+  `$REPO`), closed, or filtered out as non-actionable (already `fix:applied`, etc.), so a silent
+  skip never looks like success.
 
 **Test.** `--issue` + `--dry-run` lists only the requested, actionable issues and warns about
 requested-but-skipped numbers.
@@ -78,15 +81,22 @@ requested-but-skipped numbers.
     caller (via stdout / a global). `eval` is acceptable: `--check-cmd` is operator-supplied
     (same trust level as any CLI flag), unlike attacker-controlled issue content. This is
     documented in the help text and the security note.
-- **Integration point** (in `process_issue`, the fix→review retry loop, ~`700-815`): after the
-  `DONE-FIX-APPLIED` marker check and the `commit_count` verification, and **before** the
-  `review_prompt` agent call (~`773`):
+  - **Output cap:** tail the last ~200 lines / ~16 KB of combined output before handing it to the
+    caller (mirrors the 500 KB diff cap at `755-760`), so a huge test log cannot bloat the fix
+    prompt, the GitHub comment, or a shell variable (Codex IMPORTANT).
+- **Integration point** (in `process_issue`, the fix→review retry loop). The loop increments
+  `attempt` at its top (`686-687`) and the exhausted-budget reject path lives at `823-838`;
+  `--check-cmd` must **reuse that exact machinery, not a parallel budget**. After the
+  `DONE-FIX-APPLIED` marker check and the `commit_count` verification (`740-749`), and **before**
+  the review block — i.e. before the diff capture / diff-cap / worktree stash and before
+  `info "[#$num] REVIEW"` (`751-779`) so a failing local gate is never recorded as a review
+  attempt (Codex IMPORTANT):
   - If `CHECK_CMDS` is non-empty, run `run_checks`.
-  - On failure: set `feedback` to a labelled block ("Project checks failed:\n<cmd>\n<output>")
-    and re-enter the fix retry loop exactly like the `DONE-REJECTED` branch (decrement the
-    retry budget, loop back to the fix stage). On exhausted budget → `fix:rejected` via the same
-    path the review-reject uses, with the check output in the GitHub comment.
-  - On success: proceed to the review agent.
+  - On failure: set the **same** `feedback` variable the `DONE-REJECTED` branch uses (a labelled
+    block: "Project checks failed:\n<cmd>\n<capped output>") and fall through into the identical
+    reject/continue path — same `cleanup_branch`, same loop-continue, and on exhausted budget the
+    same `fix:rejected` label + GitHub comment (`823-838`). No new budget counter is introduced.
+  - On success: proceed to the review block / review agent.
 - Because a PR is only opened after review approval, and review is only reached after checks
   pass, checks gate the PR and therefore auto-merge — no change needed in the merge path.
 - The check output passed into the fix prompt is operator/tool output; it is embedded as
@@ -107,25 +117,38 @@ check commands run in `$PROJECT`.
 dirty tree; the next run's preflight clean check then refuses to start.
 
 **Design.**
-- New globals (init empty near the other state vars ~`58`): `CURRENT_ISSUE`, `CURRENT_BRANCH`,
-  `CURRENT_AGENT_PID`, `CURRENT_WATCH_PID`.
+- New globals (init empty/false near the other state vars ~`58`): `CURRENT_ISSUE`,
+  `CURRENT_BRANCH`, `CURRENT_AGENT_PID`, `CURRENT_WATCH_PID`, `CURRENT_PUSHED=false`.
 - `run_agent` sets `CURRENT_AGENT_PID=$agent_pid` / `CURRENT_WATCH_PID=$watch_pid` right after
   launch, and clears both (`=""`) after the final `wait`.
 - `process_issue` sets `CURRENT_ISSUE` / `CURRENT_BRANCH` after the fix branch is created and
-  clears them at every return path / loop end.
+  clears them (and resets `CURRENT_PUSHED=false`) at **every** return path / loop end.
+- **Push lifecycle (Codex IMPORTANT):** push/PR/labeling spans `843-925`. Set
+  `CURRENT_PUSHED=true` immediately after `git push` succeeds. Once a branch is pushed, its
+  remote branch + PR are durable and are reconciled next run by the `fix:pr-open`/unstick logic —
+  so the trap must **not** delete a pushed branch.
 - `on_interrupt()` handler, registered once via `trap on_interrupt INT TERM` after the helper
   functions are defined:
-  - `warn` that the run was interrupted and is cleaning up.
-  - Kill children then the agent/watchdog: `pkill -P "$CURRENT_AGENT_PID"`, `kill "$CURRENT_AGENT_PID"`
-    (guarded by non-empty), same for the watchdog PID.
-  - If `CURRENT_BRANCH` is set: `cleanup_branch "$CURRENT_ISSUE" "$CURRENT_BRANCH" "interrupted"`
-    (existing helper: stash dirty work → checkout base → `branch -D`). **No label is set.**
-  - `exit 130`.
+  1. **Disarm re-entrancy first:** `trap - INT TERM` so a second Ctrl-C cannot re-enter cleanup.
+  2. `warn` that the run was interrupted and is cleaning up.
+  3. **Kill, then `wait`, the children before any git op** (avoids racing an agent/git process
+     that is still exiting): `pkill -P "$CURRENT_AGENT_PID"` then `kill "$CURRENT_AGENT_PID"`
+     (guarded by non-empty), same for the watchdog PID, then `wait` on them. PID cleanup is
+     **best-effort**: `$!` captures the pipeline's last process, not a process-group handle, so
+     `pkill -P` + `kill` match the existing watchdog semantics rather than guaranteeing a full
+     process-group sweep.
+  4. If `CURRENT_BRANCH` is set **and `CURRENT_PUSHED` is false**:
+     `cleanup_branch "$CURRENT_ISSUE" "$CURRENT_BRANCH" "interrupted"` (existing helper: stash
+     dirty work → checkout base → `branch -D`). If already pushed, leave the local + remote branch
+     intact. **No label is set in either case.**
+  5. `exit 130`.
 - No terminal label means the issue stays in the queue and is naturally retried next run (covers
   the "Explicit resume mode" roadmap item via consistent label state).
 
 **Error handling.** `cleanup_branch` already swallows its own failures (`|| true`); the stash is
-recoverable via `git stash list` as documented elsewhere.
+recoverable via `git stash list` as documented elsewhere. `exit 130` from a trap is safe here
+because the script does not use `set -e` and already exits explicitly throughout
+(validation/fetch failures).
 
 **Test.** Hard to unit-test signals; verify by inspection + a manual SIGINT during a run leaves
 `$PROJECT` clean on the base branch with the fix branch gone and no new label on the issue.
@@ -142,10 +165,20 @@ recoverable via `git stash list` as documented elsewhere.
   the same global variables. Arg parsing then runs last, so CLI flags override config naturally.
   Scalars: last writer wins (CLI > project > global). Repeatable keys (`label`, `check_cmd`):
   additive (config entries + CLI entries combine).
+- **Additive-key caveat (Codex IMPORTANT):** because `label`/`check_cmd` are additive, a config
+  `label = bug` plus CLI `--label security` becomes an AND filter (`gh issue list --label bug
+  --label security`), not an override — a user **cannot remove** a config-provided label or
+  check from the CLI. This is intended but must be documented in the help text and the config
+  section of the README.
+- **Boolean override (Codex IMPORTANT):** today only `--no-auto-merge` exists. Add a matching
+  `--auto-merge` flag (sets `AUTO_MERGE=true`) so a global `auto_merge = false` can be overridden
+  back to true from the CLI, honouring "CLI wins" in both directions.
 - **Safe parser** `load_config(file)`:
-  - Skip blank lines and `#` comments. Split each line on the first `=`. Trim surrounding
-    whitespace from key and value. Strip one optional layer of matching surrounding quotes from
-    the value.
+  - Skip blank lines and `#` comments. **Strip a trailing `\r`** from each line so CRLF
+    (Windows-authored) configs parse cleanly. A non-comment, non-blank line **without `=`** →
+    `warn "malformed config line in $file: <line>"` and skip (Codex IMPORTANT).
+  - Split each line on the first `=`. Trim surrounding whitespace from key and value. Strip one
+    optional layer of matching surrounding quotes from the value.
   - Map the key (lower_snake) against an explicit allowlist and assign to the corresponding
     variable. **No `source`, no `eval`** — values are only ever assigned as plain strings, so a
     malicious config cannot execute code (worst case: a known variable holds a string).
@@ -166,6 +199,13 @@ recoverable via `git stash list` as documented elsewhere.
 - After the command preview, add a prompt: "Save these settings to ./.fixbuddy.conf? [y/N]".
   On yes, write the collected answers as `key = value` lines (only the keys the wizard gathered).
   Then print that the next run can be just `fixbuddy.sh` (which reads the config).
+- **Location footgun (Codex IMPORTANT):** the wizard writes to `./.fixbuddy.conf` in the **CWD**,
+  consistent with where fixbuddy reads the project config. Print the **absolute path** written,
+  and if `CWD != PROJECT`, `warn` that the config lives in the launch directory ("run fixbuddy
+  from here, or move `.fixbuddy.conf` to where you'll run it"). This keeps the simple CWD model
+  while removing the silent-mismatch trap.
+- **Quote on write:** values containing spaces or `#` (repo paths, project paths, check commands)
+  must be written quoted in the parser's supported quoting form, so they round-trip correctly.
 - Do not overwrite an existing `.fixbuddy.conf` without confirming.
 
 **Test.** A `.fixbuddy.conf` setting `max = 5` is honored; `--max 3` on the CLI overrides it to 3
@@ -177,8 +217,8 @@ as a literal string and never executed.
 ## Cross-cutting
 
 - **Help text / usage** (`sed -n '2,36p' "$0"` block at the top): document `--issue`,
-  `--check-cmd`, and `.fixbuddy.conf` precedence; note that `--check-cmd` runs operator-trusted
-  commands in `$PROJECT`.
+  `--check-cmd`, `--auto-merge`, and `.fixbuddy.conf` precedence (incl. the additive-key caveat);
+  note that `--check-cmd` runs operator-trusted commands in `$PROJECT`.
 - **README**: add the new flags, the config-file section, and correct the dry-run wording.
 - **Static gate**: every change must keep `bash -n` and `shellcheck -S warning` clean.
 - **Ordering of work** (suggested): (1) dry-run read-only → (2) trap → (3) `--issue` →

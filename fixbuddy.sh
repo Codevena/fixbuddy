@@ -19,20 +19,32 @@
 #
 # Options:
 #   --label <label>           Filter issues by label (repeatable)
+#   --issue <n>               Process only this issue number (repeatable). Fetched
+#                             directly; dedup filters and --label/--severity still apply.
 #   --severity <level>        Only issues with label severity:<level>
 #   --max <n>                 Stop after N issues processed
 #   --fix-agent <agent>       claude | codex | opencode | gemini (default: claude)
 #   --review-agent <agent>    claude | codex | opencode | gemini (default: codex — cross-agent)
 #                             Note: gemini runs read-only (--approval-mode plan) when
 #                             used as verify/review agent. Warned about as fix-agent.
+#   --check-cmd <cmd>         Deterministic test gate (repeatable). Run in the project dir
+#                             after the fix commit and before review; a non-zero exit is
+#                             treated like a review rejection (retried, then fix:rejected).
+#                             Commands are OPERATOR-TRUSTED and run via the shell.
 #   --max-retries <n>         Fix retries after review rejection (default: 1 → 2 total attempts)
 #   --agent-timeout <secs>    Wall-clock timeout per agent invocation (default: 1200 = 20min)
 #   --crash-abort <n>         Abort batch after N consecutive agent crashes (default: 3)
 #   --base <branch>           Base branch (default: auto-detect main/master)
+#   --auto-merge              Enable auto-merge (default; overrides config auto_merge=false)
 #   --no-auto-merge           Create PR but don't enable auto-merge
 #   --skip-label <lbl>        Skip issues with this label (default: fix:applied)
-#   --dry-run                 List targets, don't execute
+#   --dry-run                 List targets only — fully read-only (no labels, no edits)
 #   --yes, -y                 Skip confirmation
+#
+# Config files (key = value, parsed without eval; CLI flags override):
+#   ~/.fixbuddy/config (global), then ./.fixbuddy.conf (cwd). label and check_cmd are
+#   ADDITIVE: config and CLI entries combine (labels become an AND filter), and a
+#   config-provided label/check cannot be removed from the CLI.
 
 set -uo pipefail
 VERSION="0.4.0"
@@ -41,6 +53,8 @@ VERSION="0.4.0"
 REPO=""
 PROJECT=""
 LABELS=()
+ISSUES=()
+CHECK_CMDS=()
 SEVERITY=""
 MAX=""
 FIX_AGENT="claude"
@@ -57,6 +71,16 @@ AUTO_YES=false
 # Runtime crash counter (bumped by handle_agent_crash, reset on successful agent output)
 CONSECUTIVE_CRASHES=0
 
+# Interrupt-handler state — tracks the issue/branch currently in flight so the Ctrl-C trap
+# can clean up. CURRENT_PUSHED is informational (the remote branch/PR are durable and get
+# reconciled next run). Agent/watchdog PIDs live in a FILE, not variables: run_agent runs
+# inside a command-substitution subshell whose variable assignments never reach the parent
+# shell where the trap runs, but a file written by the subshell is visible to the parent.
+CURRENT_ISSUE=""
+CURRENT_BRANCH=""
+CURRENT_PUSHED=false
+AGENT_PIDFILE=""
+
 # -------- Logging --------
 ts()    { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 info()  { printf "\033[36m[INFO ]\033[0m %s %s\n" "$(ts)" "$*" >&2; }
@@ -65,25 +89,89 @@ err()   { printf "\033[31m[ERROR]\033[0m %s %s\n" "$(ts)" "$*" >&2; }
 ok()    { printf "\033[32m[ OK  ]\033[0m %s %s\n" "$(ts)" "$*" >&2; }
 hdr()   { printf "\033[35m\n====== %s ======\033[0m\n" "$*" >&2; }
 
+# Trim leading/trailing whitespace (bash 3.2-safe, no external process).
+_trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+# -------- Config files --------
+# Parse a `key = value` config file into the option globals WITHOUT eval/source, so a
+# config can never execute code — values are only ever assigned as plain strings. Loaded
+# before arg parsing, so CLI flags override; global is loaded before project so project
+# wins. Repeatable keys (label, check_cmd) are additive. Unknown/malformed lines warn.
+load_config() {
+  local file="$1"
+  [ -f "$file" ] && [ -r "$file" ] || return 0
+  local line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"                 # tolerate CRLF (Windows-authored configs)
+    line="$(_trim "$line")"
+    [ -z "$line" ] && continue
+    case "$line" in \#*) continue ;; esac
+    case "$line" in
+      *=*) ;;
+      *) warn "malformed config line in $file (no '='): $line"; continue ;;
+    esac
+    key="$(_trim "${line%%=*}")"
+    value="$(_trim "${line#*=}")"
+    # Strip one optional layer of matching surrounding quotes.
+    case "$value" in
+      '"'*'"') value="${value#\"}"; value="${value%\"}" ;;
+      "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    case "$key" in
+      repo)          REPO="$value" ;;
+      project)       PROJECT="$value" ;;
+      fix_agent)     FIX_AGENT="$value" ;;
+      review_agent)  REVIEW_AGENT="$value" ;;
+      max)           MAX="$value" ;;
+      max_retries)   MAX_RETRIES="$value" ;;
+      agent_timeout) AGENT_TIMEOUT="$value" ;;
+      crash_abort)   CRASH_ABORT_THRESHOLD="$value" ;;
+      base)          BASE_BRANCH="$value" ;;
+      severity)      SEVERITY="$value" ;;
+      skip_label)    SKIP_LABEL="$value" ;;
+      auto_merge)
+        case "$value" in
+          true)  AUTO_MERGE=true ;;
+          false) AUTO_MERGE=false ;;
+          *) warn "config: auto_merge must be true|false (got '$value') in $file — ignored" ;;
+        esac ;;
+      label)     LABELS+=("$value") ;;
+      check_cmd) CHECK_CMDS+=("$value") ;;
+      *) warn "unknown config key '$key' in $file (ignored)" ;;
+    esac
+  done < "$file"
+}
+
+load_config "$HOME/.fixbuddy/config"
+load_config "./.fixbuddy.conf"
+
 # -------- Arg parsing --------
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) REPO="$2"; shift 2 ;;
     --project) PROJECT="$2"; shift 2 ;;
     --label) LABELS+=("$2"); shift 2 ;;
+    --issue) ISSUES+=("$2"); shift 2 ;;
     --severity) SEVERITY="$2"; shift 2 ;;
     --max) MAX="$2"; shift 2 ;;
     --fix-agent) FIX_AGENT="$2"; shift 2 ;;
     --review-agent) REVIEW_AGENT="$2"; shift 2 ;;
+    --check-cmd) CHECK_CMDS+=("$2"); shift 2 ;;
     --max-retries) MAX_RETRIES="$2"; shift 2 ;;
     --agent-timeout) AGENT_TIMEOUT="$2"; shift 2 ;;
     --crash-abort) CRASH_ABORT_THRESHOLD="$2"; shift 2 ;;
     --base) BASE_BRANCH="$2"; shift 2 ;;
+    --auto-merge) AUTO_MERGE=true; shift ;;
     --no-auto-merge) AUTO_MERGE=false; shift ;;
     --skip-label) SKIP_LABEL="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     -y|--yes) AUTO_YES=true; shift ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,47p' "$0"; exit 0 ;;
     --version) echo "fixbuddy $VERSION"; exit 0 ;;
     *) err "Unknown arg: $1"; exit 2 ;;
   esac
@@ -146,6 +234,12 @@ if [ -n "$MAX" ]; then
     0) err "--max must be greater than 0"; exit 2 ;;
   esac
 fi
+for i in "${ISSUES[@]+"${ISSUES[@]}"}"; do
+  case "$i" in
+    ''|*[!0-9]*) err "--issue must be a positive integer (got: '$i')"; exit 2 ;;
+    0) err "--issue must be greater than 0"; exit 2 ;;
+  esac
+done
 
 # -------- Auto-detect base branch --------
 if [ -z "$BASE_BRANCH" ]; then
@@ -163,14 +257,23 @@ info "Base branch: $BASE_BRANCH"
 # to succeed — the fix agent would then see user WIP mixed in with its own work.
 # Require a clean tree up-front; user recovers stashed content via `git stash pop` when
 # the run is done.
-dirty_status=$(cd "$PROJECT" && git status --porcelain)
-if [ -n "$dirty_status" ]; then
-  err "working tree at $PROJECT is not clean:"
-  printf '%s\n' "$dirty_status" | sed 's/^/    /' >&2
-  err "Commit, stash, or clean your changes before running fixbuddy (it creates commits"
-  err "on per-issue branches and cannot safely share the worktree with local WIP)."
-  exit 2
+# Skipped under --dry-run: a preview never touches the worktree, so it must not refuse
+# just because the tree has local WIP.
+if ! $DRY_RUN; then
+  dirty_status=$(cd "$PROJECT" && git status --porcelain)
+  if [ -n "$dirty_status" ]; then
+    err "working tree at $PROJECT is not clean:"
+    printf '%s\n' "$dirty_status" | sed 's/^/    /' >&2
+    err "Commit, stash, or clean your changes before running fixbuddy (it creates commits"
+    err "on per-issue branches and cannot safely share the worktree with local WIP)."
+    exit 2
+  fi
 fi
+
+# Label creation and the fix:pr-open unstick scan both MUTATE the repo, so they are
+# skipped under --dry-run to keep a preview fully read-only. The issue fetch further
+# below is read-only and runs unconditionally.
+if ! $DRY_RUN; then
 
 # -------- Ensure control labels exist --------
 for l_info in "fix:applied|0E8A16|fixbuddy merged a fix" \
@@ -219,24 +322,55 @@ while IFS= read -r stuck_issue; do
   fi
 done < <(echo "$stuck_list" | jq -c '.[]')
 [ "$unstuck" -gt 0 ] && info "Unstuck $unstuck issue(s) whose fix:pr-open PRs are no longer open"
+fi  # end: skip mutating setup under --dry-run
 
 # -------- Fetch issues --------
-search_args=(--repo "$REPO" --state open --json "number,title,labels,url,body" --limit 200)
-for l in "${LABELS[@]+"${LABELS[@]}"}"; do search_args+=(--label "$l"); done
-[ -n "$SEVERITY" ] && search_args+=(--label "severity:$SEVERITY")
+# Required-label set (from --label plus --severity), enforced in the jq filter below for
+# BOTH fetch modes so --label/--severity compose with --issue as additional AND constraints.
+req_labels=()
+for l in "${LABELS[@]+"${LABELS[@]}"}"; do req_labels+=("$l"); done
+[ -n "$SEVERITY" ] && req_labels+=("severity:$SEVERITY")
+req_json='[]'
+if [ "${#req_labels[@]}" -gt 0 ]; then
+  req_json=$(printf '%s\n' "${req_labels[@]}" | jq -R . | jq -s .)
+fi
 
-info "Fetching issues from $REPO..."
-if ! issues_json=$(gh issue list "${search_args[@]}" 2>&1); then
-  err "gh issue list failed: $issues_json"
-  exit 1
+if [ "${#ISSUES[@]}" -gt 0 ]; then
+  # Targeted mode: fetch each requested issue directly so a number outside the 200-item
+  # list page is never silently missed. Missing/closed issues warn and are dropped.
+  info "Fetching ${#ISSUES[@]} requested issue(s) from $REPO..."
+  issues_json='[]'
+  for inum in "${ISSUES[@]}"; do
+    iv_rc=0
+    iv=$(gh issue view "$inum" --repo "$REPO" \
+      --json number,title,labels,url,state,body 2>/dev/null) || iv_rc=$?
+    if [ "$iv_rc" -ne 0 ] || [ -z "$iv" ]; then
+      warn "issue #$inum not found in $REPO (or not accessible) — skipping"
+      continue
+    fi
+    if [ "$(jq -r '.state // empty' <<<"$iv")" != "OPEN" ]; then
+      warn "issue #$inum is not open — skipping"
+      continue
+    fi
+    issues_json=$(jq -c --argjson cur "$iv" '. + [$cur]' <<<"$issues_json")
+  done
+else
+  search_args=(--repo "$REPO" --state open --json "number,title,labels,url,body" --limit 200)
+  for l in "${LABELS[@]+"${LABELS[@]}"}"; do search_args+=(--label "$l"); done
+  [ -n "$SEVERITY" ] && search_args+=(--label "severity:$SEVERITY")
+  info "Fetching issues from $REPO..."
+  if ! issues_json=$(gh issue list "${search_args[@]}" 2>&1); then
+    err "gh issue list failed: $issues_json"
+    exit 1
+  fi
 fi
 total_issues=$(echo "$issues_json" | jq 'length')
 case "$total_issues" in
-  ''|*[!0-9]*) err "gh issue list returned unexpected data (total_issues='$total_issues')"; exit 1 ;;
+  ''|*[!0-9]*) err "fetch returned unexpected data (total_issues='$total_issues')"; exit 1 ;;
 esac
 
 # Filter out completed, pending-PR, rejected, false-positive, and umbrella/meta issues.
-filtered=$(echo "$issues_json" | jq --arg skip "$SKIP_LABEL" '
+filtered=$(echo "$issues_json" | jq --arg skip "$SKIP_LABEL" --argjson req "$req_json" '
   [.[] | select(
     ((.labels|map(.name)) | index($skip) | not)
     and ((.labels|map(.name)) | index("fix:pr-open") | not)
@@ -245,6 +379,7 @@ filtered=$(echo "$issues_json" | jq --arg skip "$SKIP_LABEL" '
     and ((.labels|map(.name)) | index("fix:false-positive") | not)
     and ((.labels|map(.name)) | index("fix:rejected") | not)
     and ((.labels|map(.name)) | index("fix:needs-human") | not)
+    and (([.labels[].name]) as $have | ($req | map(. as $r | ($have | index($r)) != null) | all))
   )]')
 target_count=$(echo "$filtered" | jq 'length')
 case "$target_count" in
@@ -252,12 +387,42 @@ case "$target_count" in
 esac
 
 info "Found $total_issues matching; $target_count actionable after filters"
+
+# In targeted mode, warn about requested issues that were fetched (open) but filtered out
+# (already completed, or excluded by a dedup/label filter), so a skip is never silent.
+# Issues that were missing/closed were already warned during the direct fetch above.
+if [ "${#ISSUES[@]}" -gt 0 ]; then
+  fetched_nums=" $(echo "$issues_json" | jq -r '.[].number' | tr '\n' ' ')"
+  filtered_nums=" $(echo "$filtered" | jq -r '.[].number' | tr '\n' ' ')"
+  for inum in "${ISSUES[@]}"; do
+    case "$filtered_nums" in *" $inum "*) continue ;; esac
+    case "$fetched_nums" in
+      *" $inum "*) warn "issue #$inum is open but not actionable (already completed or excluded by a label/dedup filter) — skipping" ;;
+    esac
+  done
+fi
+
 [ "$target_count" = "0" ] && { warn "No issues to process."; exit 0; }
 
 if $DRY_RUN; then
   echo ""
-  echo "=== Would process (first 20): ==="
-  echo "$filtered" | jq -r '.[] | "#\(.number) [\(.labels|map(.name)|join(","))] \(.title)"' | head -20
+  echo "=== Dry run — would process $target_count issue(s)${MAX:+ (stopping after --max $MAX)} ==="
+  echo "  Fix agent:    $FIX_AGENT"
+  echo "  Review agent: $REVIEW_AGENT"
+  echo "  Project:      $PROJECT"
+  echo "  Base branch:  $BASE_BRANCH"
+  echo "  Auto-merge:   $AUTO_MERGE"
+  if [ "${#CHECK_CMDS[@]}" -gt 0 ]; then
+    echo "  Checks:"
+    for c in "${CHECK_CMDS[@]}"; do echo "    - $c"; done
+  fi
+  echo ""
+  if [ -n "$MAX" ]; then
+    echo "$filtered" | jq -r '.[] | "#\(.number) [\(.labels|map(.name)|join(","))] \(.title)"' | head -n "$MAX"
+    [ "$target_count" -gt "$MAX" ] && echo "  … and $((target_count - MAX)) more not shown (--max $MAX)"
+  else
+    echo "$filtered" | jq -r '.[] | "#\(.number) [\(.labels|map(.name)|join(","))] \(.title)"'
+  fi
   exit 0
 fi
 
@@ -318,6 +483,8 @@ run_agent() {
       ;;
   esac
   local agent_pid=$!
+  # Record the PID in the shared file so the parent's interrupt trap can reach this agent.
+  [ -n "$AGENT_PIDFILE" ] && printf '%s\n' "$agent_pid" > "$AGENT_PIDFILE"
 
   # Watchdog — polls every 10s, kills process group on timeout
   (
@@ -339,6 +506,7 @@ run_agent() {
     kill -KILL "$agent_pid" 2>/dev/null
   ) >/dev/null 2>&1 &
   local watch_pid=$!
+  [ -n "$AGENT_PIDFILE" ] && printf '%s %s\n' "$agent_pid" "$watch_pid" > "$AGENT_PIDFILE"
 
   wait "$agent_pid" 2>/dev/null
   local rc=$?
@@ -361,6 +529,7 @@ run_agent() {
 
   kill "$watch_pid" 2>/dev/null
   wait "$watch_pid" 2>/dev/null
+  [ -n "$AGENT_PIDFILE" ] && : > "$AGENT_PIDFILE"
 
   local out
   out=$(cat "$outfile")
@@ -386,6 +555,74 @@ cleanup_branch() {
     git checkout "$BASE_BRANCH" >/dev/null 2>&1 || true
     git branch -D "$branch" >/dev/null 2>&1 || true
   ) || true
+}
+
+# Run the operator-supplied --check-cmd gate(s) in the project dir. Commands are trusted
+# (CLI/config level, not issue content), so the shell runs them via eval. Returns 0 when
+# all pass; on the first failure returns non-zero and prints a "<cmd>\n<capped output>"
+# block on stdout. The full command output is streamed to a temp FILE (never held whole in
+# a shell variable); only the last 200 lines AND at most 16 KB are read back, so a huge or
+# long-lined test log can't bloat memory, the prompt, or the GitHub comment.
+run_checks() {
+  [ "${#CHECK_CMDS[@]}" -gt 0 ] || return 0
+  local cmd rc tmp capped
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fixbuddy-check.XXXXXX") || return 1
+  for cmd in "${CHECK_CMDS[@]}"; do
+    ( cd "$PROJECT" && eval "$cmd" ) >"$tmp" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      # Last 200 lines, then clamp to the trailing 16 KB — both caps applied to the file.
+      capped=$(tail -n 200 "$tmp" | tail -c 16384)
+      rm -f "$tmp"
+      printf 'Check failed (exit %s): %s\n\n%s\n' "$rc" "$cmd" "$capped"
+      return 1
+    fi
+  done
+  rm -f "$tmp"
+  return 0
+}
+
+# Interrupt handler — on Ctrl-C/SIGTERM, stop the in-flight agent and leave the LOCAL repo
+# in a clean state so the next run resumes. No label is set: an interrupted issue simply
+# stays in the queue. cleanup_branch is local-only (stash + checkout base + delete LOCAL
+# branch), so it is always safe — a pushed branch's remote side and any PR are untouched
+# and reconciled on the next run.
+on_interrupt() {
+  trap - INT TERM   # disarm first so a second Ctrl-C cannot re-enter cleanup
+  warn "interrupted — stopping current agent and cleaning up (no label set; issue will retry next run)"
+  # PIDs come from the shared file (run_agent's assignments happen in a subshell and never
+  # reach this parent shell). Kill children then the process for BOTH the agent and the
+  # watchdog. Best-effort: $! is the pipeline's last process, not a process-group handle.
+  local apid="" wpid=""
+  if [ -n "$AGENT_PIDFILE" ] && [ -s "$AGENT_PIDFILE" ]; then
+    read -r apid wpid < "$AGENT_PIDFILE" || true
+  fi
+  for p in "$apid" "$wpid"; do
+    [ -n "$p" ] || continue
+    pkill -P "$p" 2>/dev/null || true
+    kill "$p" 2>/dev/null || true
+  done
+  # We cannot `wait` on the agent (it is a child of a command-substitution subshell, not of
+  # this shell), so poll for its exit before touching git, to avoid racing a fix commit that
+  # is still in flight. Mirror the watchdog escalation: ~5s SIGTERM grace, then SIGKILL, then
+  # a short settle — so cleanup never runs while a wedged agent is still writing.
+  if [ -n "$apid" ]; then
+    local tries=0
+    while kill -0 "$apid" 2>/dev/null && [ "$tries" -lt 5 ]; do sleep 1; tries=$((tries+1)); done
+    if kill -0 "$apid" 2>/dev/null; then
+      warn "agent did not exit on SIGTERM after 5s — sending SIGKILL"
+      pkill -KILL -P "$apid" 2>/dev/null || true
+      kill -KILL "$apid" 2>/dev/null || true
+      sleep 1   # guaranteed settle after SIGKILL before any git op, regardless of reap speed
+      tries=0
+      while kill -0 "$apid" 2>/dev/null && [ "$tries" -lt 5 ]; do sleep 1; tries=$((tries+1)); done
+    fi
+  fi
+  if [ -n "$CURRENT_BRANCH" ]; then
+    $CURRENT_PUSHED && warn "branch was already pushed; cleaning up locally only (remote branch/PR are reconciled next run)"
+    cleanup_branch "$CURRENT_ISSUE" "$CURRENT_BRANCH" "interrupted"
+  fi
+  exit 130
 }
 
 # Called when run_agent returned a crash rc. Labels the issue fix:blocked (auto-requeues
@@ -635,6 +872,13 @@ process_issue() {
   local issue_log="$log_root/issue-$num.log"
   : > "$issue_log"
 
+  # Interrupt-handler state for this issue. CURRENT_BRANCH is set only once the branch
+  # exists; CURRENT_PUSHED flips after a successful push. The main loop clears all three
+  # after process_issue returns, so every return path is covered without per-path resets.
+  CURRENT_ISSUE="$num"
+  CURRENT_BRANCH=""
+  CURRENT_PUSHED=false
+
   hdr "Issue #$num: $title"
 
   # ---- Stage 1: VERIFY ----
@@ -706,6 +950,7 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
       blocked=$((blocked+1))
       return 0
     fi
+    CURRENT_BRANCH="$branch"   # branch now exists — interrupt trap may clean it up
 
     info "[#$num] FIX attempt $attempt/$((MAX_RETRIES+1))"
     out=$(run_agent "$FIX_AGENT" "$(fix_prompt "$num" "$title" "$body" "$feedback")" "$issue_log" fix)
@@ -748,6 +993,28 @@ The \`fix:needs-human\` label has been applied. This issue requires human attent
       return 0
     fi
 
+    # ---- CHECK GATE (deterministic, before review) ----
+    # Operator-supplied --check-cmd(s) run here so a failing build/test never reaches the
+    # reviewer or a PR. A failure sets $feedback and flags skip_review, then falls through to
+    # the SHARED reject/retry handling below — the exact same path a review rejection uses
+    # (same retry budget via the loop's attempt counter, same fix:rejected label/comment,
+    # same cleanup_branch).
+    local skip_review=false
+    if [ "${#CHECK_CMDS[@]}" -gt 0 ]; then
+      info "[#$num] CHECK (${#CHECK_CMDS[@]} command(s))"
+      local check_out
+      if ! check_out=$(run_checks); then
+        warn "[#$num] checks failed — treating as rejection"
+        feedback="Project checks failed (these run before review). Fix them so the checks pass:
+
+$check_out"
+        skip_review=true
+      else
+        ok "[#$num] checks passed"
+      fi
+    fi
+
+    if ! $skip_review; then
     # ---- REVIEW ----
     info "[#$num] REVIEW attempt $attempt/$((MAX_RETRIES+1))"
     local diff
@@ -818,14 +1085,17 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
     if [ -z "$feedback" ]; then
       feedback="DONE-REJECTED: (reviewer produced no DONE-APPROVED or DONE-REJECTED marker — inspect $issue_log)"
     fi
+    fi  # end: skip review when checks already failed this attempt
+
+    # ---- SHARED reject/retry handling (review rejection OR failed check gate) ----
     warn "[#$num] $feedback"
 
     if [ "$attempt" -gt "$MAX_RETRIES" ]; then
       err "[#$num] retry budget exhausted, giving up"
       gh issue edit "$num" --repo "$REPO" --add-label "fix:rejected" >/dev/null 2>&1 || true
-      gh issue comment "$num" --repo "$REPO" --body "**fixbuddy reviewer rejected all $((MAX_RETRIES+1)) attempts.**
+      gh issue comment "$num" --repo "$REPO" --body "**fixbuddy: no acceptable fix after $((MAX_RETRIES+1)) attempt(s)** (review rejection or failed checks).
 
-Last reviewer feedback:
+Last feedback:
 $feedback
 
 Full logs: \`$issue_log\` on the machine where fixbuddy ran." >/dev/null 2>&1 || true
@@ -834,7 +1104,7 @@ Full logs: \`$issue_log\` on the machine where fixbuddy ran." >/dev/null 2>&1 ||
       return 0
     fi
 
-    info "[#$num] retrying with reviewer feedback"
+    info "[#$num] retrying with feedback"
     # Loop continues: branch will be reset at top of loop
   done
 
@@ -850,6 +1120,7 @@ Full logs: \`$issue_log\` on the machine where fixbuddy ran." >/dev/null 2>&1 ||
     blocked=$((blocked+1))
     return 0
   fi
+  CURRENT_PUSHED=true   # remote branch now exists — interrupt trap must not delete it
 
   local commit_title
   commit_title=$(cd "$PROJECT" && git log -1 --pretty=%s "$branch")
@@ -926,6 +1197,11 @@ The PR is awaiting human review or merge. The issue is labeled \`fix:pr-open\` s
 }
 
 # -------- Main loop --------
+# Shared file for in-flight agent/watchdog PIDs (see AGENT_PIDFILE note above), then arm the
+# interrupt handler now that all helpers (cleanup_branch, run_agent) are defined.
+AGENT_PIDFILE=$(mktemp "${TMPDIR:-/tmp}/fixbuddy-pids.XXXXXX" 2>/dev/null || true)
+trap on_interrupt INT TERM
+
 while IFS= read -r issue; do
   num=$(echo "$issue" | jq -r '.number')
   title=$(echo "$issue" | jq -r '.title')
@@ -940,6 +1216,9 @@ while IFS= read -r issue; do
 
   process_issue "$num" "$title" "$body"
   processed=$((processed+1))
+  # Issue finished — clear interrupt-handler state so a later Ctrl-C (between issues)
+  # doesn't act on a stale branch reference.
+  CURRENT_ISSUE=""; CURRENT_BRANCH=""; CURRENT_PUSHED=false
 
   if [ "$CONSECUTIVE_CRASHES" -ge "$CRASH_ABORT_THRESHOLD" ]; then
     err "$CONSECUTIVE_CRASHES consecutive agent crashes — aborting batch to avoid fake-rejects."
@@ -950,6 +1229,10 @@ while IFS= read -r issue; do
     break
   fi
 done < <(echo "$filtered" | jq -c '.[]')
+
+# Run finished normally — disarm the interrupt trap and drop the PID file.
+trap - INT TERM
+[ -n "$AGENT_PIDFILE" ] && rm -f "$AGENT_PIDFILE"
 
 # -------- Summary --------
 hdr "Summary"

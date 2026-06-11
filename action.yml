@@ -95,7 +95,7 @@ runs:
 
         if [ -n "$FIXBUDDY_SEVERITY" ]; then cmd+=(--severity "$FIXBUDDY_SEVERITY"); fi
         if [ -n "$FIXBUDDY_BASE" ]; then cmd+=(--base "$FIXBUDDY_BASE"); fi
-        if [ "$FIXBUDDY_AUTO_MERGE" = "false" ]; then cmd+=(--no-auto-merge); fi
+        if [ "$FIXBUDDY_AUTO_MERGE" = "false" ]; then cmd+=(--no-auto-merge); else cmd+=(--auto-merge); fi
         if [ "$FIXBUDDY_DRY_RUN" = "true" ]; then cmd+=(--dry-run); fi
 
         # Comma-separated labels become repeated --label flags. Each entry is

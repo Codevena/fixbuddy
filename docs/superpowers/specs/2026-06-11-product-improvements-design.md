@@ -118,29 +118,34 @@ dirty tree; the next run's preflight clean check then refuses to start.
 
 **Design.**
 - New globals (init empty/false near the other state vars ~`58`): `CURRENT_ISSUE`,
-  `CURRENT_BRANCH`, `CURRENT_AGENT_PID`, `CURRENT_WATCH_PID`, `CURRENT_PUSHED=false`.
-- `run_agent` sets `CURRENT_AGENT_PID=$agent_pid` / `CURRENT_WATCH_PID=$watch_pid` right after
-  launch, and clears both (`=""`) after the final `wait`.
+  `CURRENT_BRANCH`, `CURRENT_PUSHED=false`, and `AGENT_PIDFILE`.
+- **PID visibility (Codex CRITICAL):** `run_agent` runs inside a command-substitution subshell
+  (`out=$(run_agent …)`), so any variable it assigns is invisible to the parent shell where the
+  trap runs. The agent/watchdog PIDs are therefore written to a **file** (`AGENT_PIDFILE`,
+  created via `mktemp` before the main loop) by `run_agent`, and cleared after the agent is
+  reaped. A file written by the subshell IS visible to the parent.
 - `process_issue` sets `CURRENT_ISSUE` / `CURRENT_BRANCH` after the fix branch is created and
-  clears them (and resets `CURRENT_PUSHED=false`) at **every** return path / loop end.
-- **Push lifecycle (Codex IMPORTANT):** push/PR/labeling spans `843-925`. Set
-  `CURRENT_PUSHED=true` immediately after `git push` succeeds. Once a branch is pushed, its
-  remote branch + PR are durable and are reconciled next run by the `fix:pr-open`/unstick logic —
-  so the trap must **not** delete a pushed branch.
-- `on_interrupt()` handler, registered once via `trap on_interrupt INT TERM` after the helper
-  functions are defined:
+  the main loop clears all three (incl. `CURRENT_PUSHED`) after `process_issue` returns, so every
+  return path is covered without per-path resets.
+- **Push lifecycle:** set `CURRENT_PUSHED=true` immediately after `git push` succeeds. This is
+  **informational only** (used for a clarifying log line) — see the cleanup rule below.
+- `on_interrupt()` handler, registered via `trap on_interrupt INT TERM` after the helpers are
+  defined (and disarmed on normal exit):
   1. **Disarm re-entrancy first:** `trap - INT TERM` so a second Ctrl-C cannot re-enter cleanup.
-  2. `warn` that the run was interrupted and is cleaning up.
-  3. **Kill, then `wait`, the children before any git op** (avoids racing an agent/git process
-     that is still exiting): `pkill -P "$CURRENT_AGENT_PID"` then `kill "$CURRENT_AGENT_PID"`
-     (guarded by non-empty), same for the watchdog PID, then `wait` on them. PID cleanup is
-     **best-effort**: `$!` captures the pipeline's last process, not a process-group handle, so
-     `pkill -P` + `kill` match the existing watchdog semantics rather than guaranteeing a full
-     process-group sweep.
-  4. If `CURRENT_BRANCH` is set **and `CURRENT_PUSHED` is false**:
-     `cleanup_branch "$CURRENT_ISSUE" "$CURRENT_BRANCH" "interrupted"` (existing helper: stash
-     dirty work → checkout base → `branch -D`). If already pushed, leave the local + remote branch
-     intact. **No label is set in either case.**
+  2. `warn` that the run was interrupted and is cleaning up (no label set).
+  3. **Kill children + process for BOTH the agent and the watchdog**, reading their PIDs from
+     `AGENT_PIDFILE`: `pkill -P "$pid"` then `kill "$pid"`. We cannot `wait` on them (they are
+     children of a command-substitution subshell, not of this shell), so **poll `kill -0`**:
+     ~5 s SIGTERM grace, then escalate to **SIGKILL** (`pkill -KILL -P` + `kill -KILL`) and a
+     short settle, so cleanup never runs while a wedged agent is still writing to the worktree.
+  4. If `CURRENT_BRANCH` is set, **always** run
+     `cleanup_branch "$CURRENT_ISSUE" "$CURRENT_BRANCH" "interrupted"`. `cleanup_branch` is
+     **local-only** (stash dirty WIP → checkout base → `git branch -D` the LOCAL branch); it
+     never touches the remote. Deleting the local branch is therefore harmless to an open PR
+     (which references `origin/fix/issue-N`): when `CURRENT_PUSHED` is true, the **remote branch
+     and PR survive intact** and are reconciled next run by the `fix:pr-open`/unstick logic; a
+     pushed-but-not-yet-PR'd branch is reused on the next run (the existing "PR already open"
+     path prevents duplicates). **No label is set in any case.**
   5. `exit 130`.
 - No terminal label means the issue stays in the queue and is naturally retried next run (covers
   the "Explicit resume mode" roadmap item via consistent label state).

@@ -168,7 +168,11 @@ if curl -fsSL "$RAW_BASE/$REF/SHA256SUMS" -o "$TMP_DL/SHA256SUMS" 2>/dev/null; t
       [ "$expected" = "$actual" ] || \
         die "Checksum mismatch for $script (expected $expected, got $actual). Aborting."
     done
-    ok "Checksums verified against SHA256SUMS."
+    ok "Checksums match SHA256SUMS (download integrity only, not a signature)."
+    case "$REF" in
+      v[0-9]*) ;;  # tagged release — SHA256SUMS is expected to match
+      *) warn "Ref '$REF' is not a release tag; the bundled SHA256SUMS may not match these scripts." ;;
+    esac
   else
     warn "No sha256 tool (sha256sum/shasum) found — skipping checksum verification."
   fi

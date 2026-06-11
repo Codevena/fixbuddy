@@ -2,6 +2,8 @@
 
 **A Bash orchestrator that turns GitHub issues into reviewed pull requests using two AI coding agents.**
 
+[![CI](https://github.com/Codevena/fixbuddy/actions/workflows/ci.yml/badge.svg)](https://github.com/Codevena/fixbuddy/actions/workflows/ci.yml)
+[![version](https://img.shields.io/github/v/tag/Codevena/fixbuddy?label=version)](https://github.com/Codevena/fixbuddy/tags)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![shell](https://img.shields.io/badge/shell-bash-black.svg)](fixbuddy.sh)
 [![agents](https://img.shields.io/badge/agents-claude%20%7C%20codex%20%7C%20opencode%20%7C%20gemini-purple.svg)](#supported-agents)
@@ -9,6 +11,31 @@
 fixbuddy reads open GitHub issues, asks one agent to verify and fix each issue, asks a second agent to review the committed diff, then opens a pull request. If enabled, it requests auto-merge after review approval.
 
 The goal is controlled automation: one issue per branch, one issue per PR, explicit labels for every outcome, and full logs for every agent call.
+
+<!--
+  Demo GIF goes above the fold here. To record one: run `fixbuddy.sh --dry-run`
+  then a real VERIFY -> FIX -> REVIEW -> PR against a small playground repo with
+  `asciinema rec demo.cast`, convert with `agg demo.cast docs/demo.gif`, then embed:
+  ![fixbuddy demo](docs/demo.gif)
+-->
+
+## Why fixbuddy
+
+Most AI issue-fixers let a single agent write a fix and, at best, review its own work. fixbuddy splits the job across **two different agents from two different vendors**: by default `claude` writes the fix and `codex` reviews the committed diff with a fresh context. The fixer never approves its own work.
+
+It needs no cloud service, no Docker, and no separate API-key broker — it drives the AI coding CLIs you already have installed (`claude`, `codex`, `opencode`, `gemini`), so it runs on the subscriptions you already pay for. The orchestrator is ~1,200 lines of readable Bash.
+
+|  | fixbuddy | Copilot coding agent | claude-code-action | OpenHands resolver |
+|---|---|---|---|---|
+| Fix **and** review | two agents, cross-vendor (fixer ≠ reviewer) | one vendor | one vendor | one agent |
+| Choice of agent | claude · codex · opencode · gemini | Copilot's models | Claude only | bring your own LLM |
+| Where it runs | your machine **or** a GitHub Action | GitHub cloud | GitHub Action | local / Docker |
+| Infra required | bash · git · gh · jq | none (hosted) | GitHub Actions | Docker + API keys |
+| Cost | your existing CLI subscriptions | paid Copilot (premium requests) | API / subscription | your API + compute |
+| Sandbox isolation | no — runs on the host ([documented](#safety-model)) | yes (Actions runner) | yes (Actions runner) | yes (Docker) |
+| Footprint | ~1,200 lines of Bash you can read | hosted SaaS | action + runtime | full framework |
+
+**When _not_ to reach for fixbuddy:** if you need a managed sandbox or compliance guarantees, want a one-click GitHub-native experience, or run against issues from untrusted contributors — use one of the tools above. fixbuddy deliberately trades isolation for a small, transparent, local-first tool (see [Safety Model](#safety-model)). It fits a solo developer or small team batch-fixing well-scoped issues in their **own** repositories.
 
 ## How It Works
 
@@ -35,6 +62,16 @@ curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.4.0/install.sh
 ```
 
 This downloads the pinned `v0.4.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+
+**Prefer to read before you run?** The installer is short — inspect it first, then run it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.4.0/install.sh -o install.sh
+less install.sh        # read it
+bash install.sh        # then run it
+```
+
+The installer verifies each downloaded script against the pinned `SHA256SUMS` (download integrity — see [Safety Model](#safety-model)).
 
 Then run:
 

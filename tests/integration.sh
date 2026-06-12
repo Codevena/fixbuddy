@@ -127,10 +127,46 @@ test_crash_labels_blocked() {
   assert_no_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
 }
 
+test_agy_full_pipeline() {
+  SCENARIO=happy; make_fixture
+  run_fixbuddy --fix-agent agy --review-agent agy
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:pr-open'
+  # agy invocation contract: workspace dir, print-timeout above the watchdog
+  # (default 1200+60), sandbox on verify/review but NOT on fix, GH_TOKEN stripped
+  assert_substr "$AGYLOG" "--add-dir=$TMP/project"
+  assert_substr "$AGYLOG" "--print-timeout=1260s"
+  assert_grep "$AGYLOG" '^stage=verify .*--sandbox'
+  assert_grep "$AGYLOG" '^stage=review .*--sandbox'
+  assert_no_grep "$AGYLOG" '^stage=fix .*--sandbox'
+  assert_grep "$AGYLOG" 'gh_token=unset'
+}
+
+test_gemini_rejected_with_migration_hint() {
+  SCENARIO=happy; make_fixture
+  run_fixbuddy --fix-agent gemini
+  [ "$RC" -eq 2 ] || fail "expected exit 2, got $RC"
+  assert_grep "$RUNLOG" "agy"
+  assert_grep "$RUNLOG" "[Gg]emini CLI"
+}
+
+test_agy_internal_timeout_is_blocked() {
+  # agy exits 0 on its own --print-timeout with an error line instead of a
+  # DONE marker; fixbuddy must classify that as a crash/timeout (fix:blocked,
+  # auto-requeue) — not as the never-retried fix:needs-human path.
+  SCENARIO=agytimeout; make_fixture
+  run_fixbuddy --fix-agent agy --review-agent agy
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:blocked'
+  assert_no_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
+}
+
 # ---------------- Runner ----------------
 
 TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
-       test_dry_run_read_only test_crash_labels_blocked)
+       test_dry_run_read_only test_crash_labels_blocked
+       test_agy_full_pipeline test_gemini_rejected_with_migration_hint
+       test_agy_internal_timeout_is_blocked)
 
 for t in "${TESTS[@]}"; do
   CURRENT="$t"

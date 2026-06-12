@@ -23,10 +23,10 @@
 #                             directly; dedup filters and --label/--severity still apply.
 #   --severity <level>        Only issues with label severity:<level>
 #   --max <n>                 Stop after N issues processed
-#   --fix-agent <agent>       claude | codex | opencode | gemini (default: claude)
-#   --review-agent <agent>    claude | codex | opencode | gemini (default: codex — cross-agent)
-#                             Note: gemini runs read-only (--approval-mode plan) when
-#                             used as verify/review agent. Warned about as fix-agent.
+#   --fix-agent <agent>       claude | codex | opencode | agy (default: claude)
+#   --review-agent <agent>    claude | codex | opencode | agy (default: codex — cross-agent)
+#                             Note: agy (Antigravity CLI) runs verify/review with
+#                             --sandbox (terminal restrictions) as defense in depth.
 #   --check-cmd <cmd>         Deterministic test gate (repeatable). Run in the project dir
 #                             after the fix commit and before review; a non-zero exit is
 #                             treated like a review rejection (retried, then fix:rejected).
@@ -189,8 +189,13 @@ done
 # dry-run on a runner without any agent CLI installed).
 for agent in "$FIX_AGENT" "$REVIEW_AGENT"; do
   case "$agent" in
-    claude|codex|opencode|gemini) ;;
-    *) err "unsupported agent: $agent (valid: claude, codex, opencode, gemini)"; exit 2 ;;
+    claude|codex|opencode|agy) ;;
+    gemini)
+      err "agent 'gemini' is no longer supported: Google retired the Gemini CLI on 2026-06-18."
+      err "Install the Antigravity CLI (curl -fsSL https://antigravity.google/cli/install.sh | bash)"
+      err "and use 'agy' instead — also in fix_agent/review_agent config keys."
+      exit 2 ;;
+    *) err "unsupported agent: $agent (valid: claude, codex, opencode, agy)"; exit 2 ;;
   esac
 done
 
@@ -200,17 +205,9 @@ if ! $DRY_RUN; then
       claude)   command -v claude   >/dev/null || { err "claude CLI not found";   exit 2; } ;;
       codex)    command -v codex    >/dev/null || { err "codex CLI not found";    exit 2; } ;;
       opencode) command -v opencode >/dev/null || { err "opencode CLI not found"; exit 2; } ;;
-      gemini)   command -v gemini   >/dev/null || { err "gemini CLI not found";   exit 2; } ;;
+      agy)      command -v agy      >/dev/null || { err "agy CLI not found";      exit 2; } ;;
     esac
   done
-
-  # Gemini is less reliable at independent reasoning than claude/codex/opencode — when used
-  # as the fix-agent it sometimes commits incomplete patches. We allow it (user's choice)
-  # but nudge toward using it read-only (verify/review) where it's much safer.
-  if [ "$FIX_AGENT" = "gemini" ]; then
-    warn "gemini as fix-agent is experimental — it may produce incomplete or wrong fixes."
-    warn "Consider --fix-agent claude (or codex/opencode) with --review-agent gemini instead."
-  fi
 fi
 
 command -v gh >/dev/null || { err "gh CLI not found"; exit 2; }
@@ -461,11 +458,13 @@ run_agent() {
   local outfile
   outfile=$(mktemp)
 
-  # Gemini is restricted to read-only (plan mode) for verify/review — it should observe
-  # and report, not write. Only the fix stage grants --yolo (tool-use). Claude/codex/
-  # opencode manage their own permissions via their own flags.
-  local gem_mode="yolo"
-  case "$stage" in verify|review) gem_mode="plan" ;; esac
+  # agy (Antigravity CLI) has no read-only mode; verify/review add --sandbox
+  # (terminal restrictions) as defense in depth. --add-dir grants workspace access
+  # to the project (agents are launched from the operator's CWD, not $PROJECT).
+  # --print-timeout sits 60s ABOVE the fixbuddy watchdog so the watchdog always
+  # fires first and the timeout is classified rc=124 (fix:blocked, auto-requeue).
+  local agy_args=(--dangerously-skip-permissions --add-dir "$PROJECT" --print-timeout "$((AGENT_TIMEOUT+60))s")
+  case "$stage" in verify|review) agy_args+=(--sandbox) ;; esac
 
   # Launch agent pipeline in background; $! captures the PID of the last command.
   case "$agent" in
@@ -478,8 +477,8 @@ run_agent() {
     opencode)
       env -u GH_TOKEN -u GITHUB_TOKEN opencode run --dangerously-skip-permissions "$prompt" </dev/null >"$outfile" 2>&1 &
       ;;
-    gemini)
-      env -u GH_TOKEN -u GITHUB_TOKEN gemini -p "$prompt" --approval-mode "$gem_mode" --output-format text </dev/null >"$outfile" 2>&1 &
+    agy)
+      env -u GH_TOKEN -u GITHUB_TOKEN agy "${agy_args[@]}" -p "$prompt" </dev/null >"$outfile" 2>&1 &
       ;;
   esac
   local agent_pid=$!
@@ -513,6 +512,17 @@ run_agent() {
 
   # Detect timeout by watchdog marker
   if grep -q "^\[fixbuddy-watchdog\]" "$outfile" 2>/dev/null; then
+    rc=124
+  fi
+
+  # agy exits 0 (!) when its own --print-timeout fires, printing this line
+  # instead of a DONE marker. Reclassify as timeout so the issue is labeled
+  # fix:blocked (auto-requeue) rather than the never-retried fix:needs-human.
+  # Normally unreachable (our --print-timeout sits above the watchdog) — belt
+  # and braces.
+  if [ "$agent" = "agy" ] && [ "$rc" -eq 0 ] \
+     && ! grep -qE '^DONE-' "$outfile" 2>/dev/null \
+     && grep -q '^Error: timed out waiting for response' "$outfile" 2>/dev/null; then
     rc=124
   fi
 

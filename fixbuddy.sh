@@ -893,7 +893,11 @@ process_issue() {
 
   # ---- Stage 1: VERIFY ----
   info "[#$num] VERIFY"
-  local out rc
+  # Capture the base ref before verify: a verify agent that COMMITS leaves a
+  # clean worktree (the residue stash below cannot catch it), and branch setup
+  # would build fix/issue-N on top of that commit and push it.
+  local out rc pre_verify_base
+  pre_verify_base=$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)
   out=$(run_agent "$FIX_AGENT" "$(verify_prompt "$num" "$title" "$body")" "$issue_log" verify)
   rc=$?
 
@@ -943,6 +947,22 @@ The \`fix:needs-human\` label has been applied. This issue requires human attent
   if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
     warn "[#$num] verify stage left worktree changes — stashing residue"
     (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-verify-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || true
+  fi
+
+  # Pin the base ref back if the verify stage moved it (committed on the base
+  # branch). Runs AFTER the stash above so a reset never touches uncommitted
+  # files; the discarded commits stay recoverable via the reflog.
+  if [ -n "$pre_verify_base" ] \
+     && [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)" != "$pre_verify_base" ]; then
+    warn "[#$num] verify stage created commits on $BASE_BRANCH — resetting to pre-verify state"
+    (
+      cd "$PROJECT" || exit 0
+      if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BASE_BRANCH" ]; then
+        git reset --hard "$pre_verify_base" >/dev/null 2>&1
+      else
+        git branch -f "$BASE_BRANCH" "$pre_verify_base" >/dev/null 2>&1
+      fi
+    ) || true
   fi
 
   # ---- Stage 2+3: FIX + REVIEW (with retry) ----

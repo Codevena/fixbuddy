@@ -172,6 +172,21 @@ test_verify_residue_is_stashed() {
   assert_no_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
 }
 
+test_verify_commit_is_discarded() {
+  # A verify agent that COMMITS (the worktree stays clean, so the residue
+  # stash cannot catch it) must not get that commit into the fix branch: the
+  # base ref is pinned back to its pre-verify position.
+  SCENARIO=verifycommit; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:pr-open'
+  [ "$(git -C "$TMP/origin.git" rev-list --count refs/heads/main..refs/heads/fix/issue-7)" -eq 1 ] \
+    || fail "rogue verify commit was pushed"
+  if git -C "$TMP/origin.git" ls-tree -r --name-only refs/heads/fix/issue-7 | grep -q '^junk\.txt$'; then
+    fail "junk.txt from the verify stage reached the PR branch"
+  fi
+}
+
 test_reviewer_commit_is_discarded() {
   # A reviewer that commits to the fix branch must not get those commits
   # pushed: the branch is pinned back to the commit the diff was taken from.
@@ -189,7 +204,8 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_dry_run_read_only test_crash_labels_blocked
        test_agy_full_pipeline test_gemini_rejected_with_migration_hint
        test_agy_internal_timeout_is_blocked
-       test_verify_residue_is_stashed test_reviewer_commit_is_discarded)
+       test_verify_residue_is_stashed test_verify_commit_is_discarded
+       test_reviewer_commit_is_discarded)
 
 for t in "${TESTS[@]}"; do
   CURRENT="$t"

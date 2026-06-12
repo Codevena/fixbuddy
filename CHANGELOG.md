@@ -31,9 +31,10 @@ test suite.
 ### Security & robustness
 - The two read-only-by-contract stages are now guarded deterministically (no
   agent CLI offers an enforced read-only mode): worktree files written during
-  **verify** are stashed before the fix branch is created, and the **review**
-  branch is pinned to the reviewed commit — commits a reviewer creates are
-  discarded, so only the reviewed commit is ever pushed.
+  **verify** are stashed and commits it creates on the base branch are
+  discarded before the fix branch is created, and the **review** branch is
+  pinned to the reviewed commit — commits a reviewer creates are discarded, so
+  only the reviewed commit is ever pushed.
 
 ## [0.5.0] - 2026-06-12
 

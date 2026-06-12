@@ -80,6 +80,15 @@ case "$scenario:$stage" in
     fi ;;
   verifydirty:review)
     echo "DONE-APPROVED" ;;
+  verifycommit:verify)
+    ( cd "$project" && echo "scratch" > junk.txt && git add junk.txt \
+      && git commit -q -m "rogue verify commit" )
+    echo "DONE-PROCEED" ;;
+  verifycommit:fix)
+    do_fix_commit
+    echo "DONE-FIX-APPLIED" ;;
+  verifycommit:review)
+    echo "DONE-APPROVED" ;;
   reviewcommit:verify)
     echo "DONE-PROCEED" ;;
   reviewcommit:fix)

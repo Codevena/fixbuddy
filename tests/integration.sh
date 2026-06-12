@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Deterministic integration tests for fixbuddy.sh. No network, no real gh, no
+# real agents: PATH is prefixed with tests/stubs (canned gh + scripted agent
+# doubles) and the GitHub remote is a local bare repository, so branch
+# creation, commits, and pushes are real git operations. Each scenario runs in
+# a fresh mktemp fixture with HOME redirected (no ~/.fixbuddy leakage).
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STUBS="$ROOT/tests/stubs"
+PASS=0
+FAIL=0
+CURRENT=""
+
+fail() { FAIL=$((FAIL+1)); printf 'FAIL %s: %s\n' "$CURRENT" "$*"; }
+
+assert_grep()    { grep -qE -- "$2" "$1" || fail "expected /$2/ in ${1##*/}"; }
+assert_no_grep() { if grep -qE -- "$2" "$1"; then fail "did not expect /$2/ in ${1##*/}"; fi; }
+assert_substr()  { grep -qF -- "$2" "$1" || fail "expected '$2' in ${1##*/}"; }
+
+make_fixture() {
+  TMP="$(mktemp -d "${TMPDIR:-/tmp}/fixbuddy-itest.XXXXXX")"
+  mkdir -p "$TMP/home"
+  git init -q --bare "$TMP/origin.git"
+  git clone -q "$TMP/origin.git" "$TMP/project" 2>/dev/null
+  (
+    cd "$TMP/project" || exit 1
+    git config user.email "test@example.com"
+    git config user.name "fixbuddy-itest"
+    mkdir -p src
+    echo "hello" > src/app.txt
+    git add .
+    git commit -q -m "initial commit"
+    git branch -M main
+    git push -q -u origin main 2>/dev/null
+    git remote set-head origin main
+  )
+  MUTLOG="$TMP/mutations.log";  : > "$MUTLOG"
+  STAGELOG="$TMP/stages.log";   : > "$STAGELOG"
+  AGYLOG="$TMP/agy.log";        : > "$AGYLOG"
+  RUNLOG="$TMP/run.log"
+}
+
+run_fixbuddy() {
+  # GH_TOKEN is set on purpose: the agent stub records whether fixbuddy
+  # stripped it from the agent environment. HOME is redirected so the user's
+  # ~/.fixbuddy/config can never leak in and run logs never pollute the real
+  # home directory.
+  ( cd "$TMP" && \
+    HOME="$TMP/home" \
+    PATH="$STUBS:$PATH" \
+    GH_TOKEN="test-token-must-not-leak" \
+    FIXBUDDY_TEST_SCENARIO="$SCENARIO" \
+    FIXBUDDY_TEST_MUTLOG="$MUTLOG" \
+    FIXBUDDY_TEST_STAGELOG="$STAGELOG" \
+    FIXBUDDY_TEST_AGYLOG="$AGYLOG" \
+    bash "$ROOT/fixbuddy.sh" --repo acme/app --project "$TMP/project" --yes "$@" \
+  ) > "$RUNLOG" 2>&1
+  RC=$?
+}
+
+# ---------------- Scenarios ----------------
+
+test_happy_path() {
+  SCENARIO=happy; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$STAGELOG" '^claude:verify$'
+  assert_grep "$STAGELOG" '^claude:fix$'
+  assert_grep "$STAGELOG" '^codex:review$'
+  assert_grep "$MUTLOG" '^pr create .*--head fix/issue-7'
+  assert_grep "$MUTLOG" '^pr merge .*--auto'
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:pr-open'
+  # the push was real: the fix branch must exist in the bare origin
+  git -C "$TMP/origin.git" show-ref --verify --quiet refs/heads/fix/issue-7 \
+    || fail "fix branch was not pushed to origin"
+  # local worktree restored: back on base, fix branch deleted
+  [ -z "$(git -C "$TMP/project" branch --list 'fix/issue-7')" ] \
+    || fail "local fix branch not cleaned up"
+}
+
+# ---------------- Runner ----------------
+
+TESTS=(test_happy_path)
+
+for t in "${TESTS[@]}"; do
+  CURRENT="$t"
+  FAIL_BEFORE=$FAIL
+  "$t"
+  if [ "$FAIL" -eq "$FAIL_BEFORE" ]; then
+    PASS=$((PASS+1)); printf 'ok   %s\n' "$t"
+  else
+    printf '     run log tail:\n'; tail -5 "$RUNLOG" 2>/dev/null | sed 's/^/     | /'
+  fi
+  rm -rf "$TMP"
+done
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

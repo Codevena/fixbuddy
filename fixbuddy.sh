@@ -935,6 +935,16 @@ The \`fix:needs-human\` label has been applied. This issue requires human attent
     return 0
   fi
 
+  # Verify is contractually read-only, but no agent CLI enforces that (agy's
+  # --sandbox still allows workspace writes; claude/codex/opencode run with
+  # permission checks skipped). The tree was clean at startup, so anything
+  # dirty here is verify-stage residue — stash it so it can never leak into
+  # the fix branch or commit. Recoverable via `git stash list`.
+  if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
+    warn "[#$num] verify stage left worktree changes — stashing residue"
+    (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-verify-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || true
+  fi
+
   # ---- Stage 2+3: FIX + REVIEW (with retry) ----
   local feedback="" attempt=0 approved=false
   while [ "$attempt" -le "$MAX_RETRIES" ]; do
@@ -1053,8 +1063,19 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
       fi
     fi
 
+    # The reviewer is contractually read-only, but no agent CLI enforces that.
+    # Record the commit the diff was taken from so any commits the reviewer
+    # creates can be discarded — only the reviewed commit may ever be pushed.
+    local review_head
+    review_head=$(cd "$PROJECT" && git rev-parse HEAD)
+
     out=$(run_agent "$REVIEW_AGENT" "$(review_prompt "$num" "$title" "$body" "$diff")" "$issue_log" review)
     rc=$?
+
+    if [ -n "$review_head" ] && [ "$(cd "$PROJECT" && git rev-parse HEAD)" != "$review_head" ]; then
+      warn "[#$num] review stage created commits — resetting branch to the reviewed commit"
+      (cd "$PROJECT" && git reset --hard "$review_head") >/dev/null 2>&1 || true
+    fi
 
     if [ "$did_stash" = "1" ]; then
       (cd "$PROJECT" && git stash pop --quiet) >/dev/null 2>&1 || warn "[#$num] 'git stash pop' failed — check 'git stash list'"

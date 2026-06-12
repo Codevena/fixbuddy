@@ -215,8 +215,10 @@ fixbuddy creates and manages these labels:
 
 - fixbuddy refuses to start if the target checkout has a dirty working tree.
 - Each issue gets a fresh `fix/issue-N` branch.
+- Files written during the verify stage (read-only by contract, but no agent CLI enforces that) are stashed before the fix branch is created.
 - The fix agent is instructed to stage only relevant files and to avoid generated artifacts.
 - The review agent receives the committed diff and must reject unrelated changes.
+- If the reviewer creates commits, the branch is reset to the reviewed commit — only the reviewed commit is ever pushed.
 - Push happens only after review approval.
 - `fix:applied` is added only after GitHub reports that the PR is merged.
 - Cleanup stashes uncommitted agent output before deleting temporary branches.

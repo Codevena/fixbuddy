@@ -28,6 +28,13 @@ test suite.
   Note: agy in verify/review runs sandboxed but NOT read-only — the old
   `--approval-mode plan` has no equivalent in the Antigravity CLI.
 
+### Security & robustness
+- The two read-only-by-contract stages are now guarded deterministically (no
+  agent CLI offers an enforced read-only mode): worktree files written during
+  **verify** are stashed before the fix branch is created, and the **review**
+  branch is pinned to the reviewed commit — commits a reviewer creates are
+  discarded, so only the reviewed commit is ever pushed.
+
 ## [0.5.0] - 2026-06-12
 
 Security hardening from a full audit, plus five new features. No breaking changes

@@ -161,12 +161,35 @@ test_agy_internal_timeout_is_blocked() {
   assert_no_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
 }
 
+test_verify_residue_is_stashed() {
+  # No agent CLI offers an enforced read-only mode, so files written during the
+  # verify stage must be stashed away before the fix branch is created — the
+  # fix stub emits DONE-BLOCKED if it still sees the residue file.
+  SCENARIO=verifydirty; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:pr-open'
+  assert_no_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
+}
+
+test_reviewer_commit_is_discarded() {
+  # A reviewer that commits to the fix branch must not get those commits
+  # pushed: the branch is pinned back to the commit the diff was taken from.
+  SCENARIO=reviewcommit; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:pr-open'
+  [ "$(git -C "$TMP/origin.git" rev-list --count refs/heads/main..refs/heads/fix/issue-7)" -eq 1 ] \
+    || fail "rogue reviewer commit was pushed"
+}
+
 # ---------------- Runner ----------------
 
 TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_dry_run_read_only test_crash_labels_blocked
        test_agy_full_pipeline test_gemini_rejected_with_migration_hint
-       test_agy_internal_timeout_is_blocked)
+       test_agy_internal_timeout_is_blocked
+       test_verify_residue_is_stashed test_reviewer_commit_is_discarded)
 
 for t in "${TESTS[@]}"; do
   CURRENT="$t"

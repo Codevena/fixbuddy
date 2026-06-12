@@ -68,6 +68,27 @@ case "$scenario:$stage" in
   agytimeout:verify)
     echo "Error: timed out waiting for response"
     exit 0 ;;
+  verifydirty:verify)
+    ( cd "$project" && echo "scratch" > junk.txt )
+    echo "DONE-PROCEED" ;;
+  verifydirty:fix)
+    if [ -f "$project/junk.txt" ]; then
+      echo "DONE-BLOCKED: verify residue leaked into the fix worktree"
+    else
+      do_fix_commit
+      echo "DONE-FIX-APPLIED"
+    fi ;;
+  verifydirty:review)
+    echo "DONE-APPROVED" ;;
+  reviewcommit:verify)
+    echo "DONE-PROCEED" ;;
+  reviewcommit:fix)
+    do_fix_commit
+    echo "DONE-FIX-APPLIED" ;;
+  reviewcommit:review)
+    ( cd "$project" && echo "rogue" >> src/app.txt && git add src/app.txt \
+      && git commit -q -m "rogue reviewer commit" )
+    echo "DONE-APPROVED" ;;
   *)
     echo "DONE-BLOCKED: unexpected scenario '$scenario' at stage '$stage'"
     exit 0 ;;

@@ -103,6 +103,14 @@ case "$scenario:$stage" in
     ( cd "$project" && echo "rogue" >> src/app.txt && git add src/app.txt \
       && git commit -q -m "rogue reviewer commit" )
     echo "DONE-APPROVED" ;;
+  reviewdirty:verify)
+    echo "DONE-PROCEED" ;;
+  reviewdirty:fix)
+    do_fix_commit
+    echo "DONE-FIX-APPLIED" ;;
+  reviewdirty:review)
+    ( cd "$project" && echo "reviewer scratch" >> src/app.txt )
+    echo "DONE-REJECTED: needs work" ;;
   *)
     echo "DONE-BLOCKED: unexpected scenario '$scenario' at stage '$stage'"
     exit 0 ;;

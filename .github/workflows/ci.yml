@@ -15,11 +15,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # One file per invocation — `bash -n a b c` only checks the first file
+      # (the rest become positional parameters).
       - name: Bash syntax
         run: |
           bash -n fixbuddy.sh
           bash -n fixbuddy-wizard.sh
-          bash -n tests/integration.sh tests/stubs/agent tests/stubs/gh
+          bash -n tests/integration.sh
+          bash -n tests/stubs/agent
+          bash -n tests/stubs/gh
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck

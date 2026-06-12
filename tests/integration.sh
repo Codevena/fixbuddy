@@ -212,6 +212,18 @@ test_reviewer_commit_is_discarded() {
     || fail "rogue reviewer commit was pushed"
 }
 
+test_reviewer_residue_cleaned_before_retry() {
+  # A reviewer that modifies tracked files and then REJECTS must not poison
+  # the retry: without cleanup the fix-branch recreation fails on the dirty
+  # tree (fix:needs-human) or the residue leaks into the next fix attempt.
+  SCENARIO=reviewdirty; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:rejected'
+  assert_no_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
+  [ "$(grep -c '^claude:fix$' "$STAGELOG")" -eq 2 ] || fail "expected 2 fix attempts"
+}
+
 # ---------------- Runner ----------------
 
 TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
@@ -220,7 +232,7 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_agy_internal_timeout_is_blocked
        test_verify_residue_is_stashed test_verify_commit_is_discarded
        test_verify_residue_cleaned_on_early_return
-       test_reviewer_commit_is_discarded)
+       test_reviewer_commit_is_discarded test_reviewer_residue_cleaned_before_retry)
 
 for t in "${TESTS[@]}"; do
   CURRENT="$t"

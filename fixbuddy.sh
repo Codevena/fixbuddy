@@ -1107,8 +1107,27 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
       (cd "$PROJECT" && git reset --hard "$review_head") >/dev/null 2>&1 || true
     fi
 
+    # Reviewer worktree residue (the tree was clean or stashed before review,
+    # so any dirt now is the reviewer's). Stash it on every outcome: on REJECT
+    # the retry would otherwise recreate the fix branch on a dirty tree (abort
+    # as fix:needs-human, or leak residue into the next attempt).
+    if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
+      warn "[#$num] review stage left worktree changes — stashing residue"
+      (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-review-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || true
+    fi
+
     if [ "$did_stash" = "1" ]; then
-      (cd "$PROJECT" && git stash pop --quiet) >/dev/null 2>&1 || warn "[#$num] 'git stash pop' failed — check 'git stash list'"
+      # The residue stash above may sit on top of the stack — pop the
+      # pre-review stash by its exact message, not blindly stash@{0}.
+      (
+        cd "$PROJECT" || exit 1
+        sid=$(git stash list 2>/dev/null | grep -m1 "fixbuddy-review-${num}\$" | cut -d: -f1)
+        if [ -n "$sid" ]; then
+          git stash pop --quiet "$sid"
+        else
+          git stash pop --quiet
+        fi
+      ) >/dev/null 2>&1 || warn "[#$num] 'git stash pop' failed — check 'git stash list'"
     fi
 
     if is_crash "$rc"; then

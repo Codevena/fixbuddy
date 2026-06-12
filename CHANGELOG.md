@@ -4,6 +4,22 @@ All notable changes to fixbuddy are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-06-12
+
+### Added
+- **`--notify-cmd <cmd>`** (repeatable) and additive config key `notify_cmd` —
+  a run-summary notification hook for unattended runs. Commands run in the
+  launch directory after the final summary (including after a crash-abort),
+  receive `FIXBUDDY_*` env vars (counts, `FIXBUDDY_ABORTED`, log dir) plus a
+  human-readable summary on stdin, and are operator-trusted (same model as
+  `--check-cmd`). A failing command warns but never changes fixbuddy's exit
+  code. Not fired for `--dry-run`, empty queues, or Ctrl-C.
+
+### Changed
+- README Roadmap retired: notifications shipped here, and explicit resume mode
+  is intentionally not built — the label system already resumes interrupted
+  runs (documented in a new FAQ entry).
+
 ## [0.6.0] - 2026-06-12
 
 Google retires the Gemini CLI on 2026-06-18; its successor is the Antigravity
@@ -81,5 +97,6 @@ to existing flags.
 
 Predate this changelog. See the git history and the `v0.4.0` / `v0.3.2` tags.
 
+[0.7.0]: https://github.com/Codevena/fixbuddy/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Codevena/fixbuddy/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Codevena/fixbuddy/compare/v0.4.0...v0.5.0

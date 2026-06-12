@@ -12,12 +12,11 @@ fixbuddy reads open GitHub issues, asks one agent to verify and fix each issue, 
 
 The goal is controlled automation: one issue per branch, one issue per PR, explicit labels for every outcome, and full logs for every agent call.
 
-<!--
-  Demo GIF goes above the fold here. To record one: run `fixbuddy.sh --dry-run`
-  then a real VERIFY -> FIX -> REVIEW -> PR against a small playground repo with
-  `asciinema rec demo.cast`, convert with `agg demo.cast docs/demo.gif`, then embed:
-  ![fixbuddy demo](docs/demo.gif)
--->
+<p align="center">
+  <img src="docs/demo.gif" alt="fixbuddy turning a GitHub issue into a reviewed, merged pull request" width="820">
+</p>
+
+<sub>The branch, commit, diff, and push above are real; the AI agents and GitHub calls are stubbed for a deterministic, offline recording — see <a href="docs/demo">docs/demo</a>.</sub>
 
 ## Why fixbuddy
 

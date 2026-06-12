@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Deterministic demo double for an AI coding CLI (used as claude/codex when recording
+# docs/demo.gif). This is NOT a real agent. It emits the DONE-* markers fixbuddy expects
+# and, in the FIX stage, makes a REAL small code fix so the diff fixbuddy reviews and the
+# PR it opens are genuine. Stage is detected from the prompt fixbuddy pipes on stdin.
+# See docs/demo/README.md.
+prompt="$(cat)"
+
+case "$prompt" in
+  *"implementing a fix"*)
+    sleep 1
+    ( cd "$DEMO_PROJECT" \
+      && sed -i.bak 's/a - b/a + b/' src/calc.py && rm -f src/calc.py.bak \
+      && git add -A \
+      && git commit -q -m "Fix add(): return a + b, not a - b" )
+    echo "Found the operator bug in add() and corrected it (a - b -> a + b)."
+    echo "DONE-FIX-APPLIED"
+    ;;
+  *"independent senior code reviewer"*)
+    sleep 1
+    echo "The diff changes 'a - b' to 'a + b' in add(). Correct, minimal, in scope."
+    echo "DONE-APPROVED"
+    ;;
+  *)
+    sleep 1
+    echo "Reproduced: add(2, 3) returns -1 instead of 5. The bug is real."
+    echo "DONE-PROCEED"
+    ;;
+esac

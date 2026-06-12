@@ -1,4 +1,4 @@
-name: fixbuddy
+name: fixbuddy two-agent issue fixer
 description: Turn GitHub issues into reviewed PRs using two AI coding agents
 author: Codevena
 branding:

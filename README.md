@@ -6,7 +6,7 @@
 [![version](https://img.shields.io/github/v/tag/Codevena/fixbuddy?label=version)](https://github.com/Codevena/fixbuddy/tags)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![shell](https://img.shields.io/badge/shell-bash-black.svg)](fixbuddy.sh)
-[![agents](https://img.shields.io/badge/agents-claude%20%7C%20codex%20%7C%20opencode%20%7C%20gemini-purple.svg)](#supported-agents)
+[![agents](https://img.shields.io/badge/agents-claude%20%7C%20codex%20%7C%20opencode%20%7C%20agy-purple.svg)](#supported-agents)
 
 fixbuddy reads open GitHub issues, asks one agent to verify and fix each issue, asks a second agent to review the committed diff, then opens a pull request. If enabled, it requests auto-merge after review approval.
 
@@ -22,12 +22,12 @@ The goal is controlled automation: one issue per branch, one issue per PR, expli
 
 Most AI issue-fixers let a single agent write a fix and, at best, review its own work. fixbuddy splits the job across **two different agents from two different vendors**: by default `claude` writes the fix and `codex` reviews the committed diff with a fresh context. The fixer never approves its own work.
 
-It needs no cloud service, no Docker, and no separate API-key broker — it drives the AI coding CLIs you already have installed (`claude`, `codex`, `opencode`, `gemini`), so it runs on the subscriptions you already pay for. The orchestrator is ~1,200 lines of readable Bash.
+It needs no cloud service, no Docker, and no separate API-key broker — it drives the AI coding CLIs you already have installed (`claude`, `codex`, `opencode`, `agy`), so it runs on the subscriptions you already pay for. The orchestrator is ~1,200 lines of readable Bash.
 
 |  | fixbuddy | Copilot coding agent | claude-code-action | OpenHands resolver |
 |---|---|---|---|---|
 | Fix **and** review | two agents, cross-vendor (fixer ≠ reviewer) | one vendor | one vendor | one agent |
-| Choice of agent | claude · codex · opencode · gemini | Copilot's models | Claude only | bring your own LLM |
+| Choice of agent | claude · codex · opencode · agy | Copilot's models | Claude only | bring your own LLM |
 | Where it runs | your machine **or** a GitHub Action | GitHub cloud | GitHub Action | local / Docker |
 | Infra required | bash · git · gh · jq | none (hosted) | GitHub Actions | Docker + API keys |
 | Cost | your existing CLI subscriptions | paid Copilot (premium requests) | API / subscription | your API + compute |
@@ -121,7 +121,7 @@ Both `--fix-agent` and `--review-agent` must be installed. They may point to the
 | `claude` | `claude --dangerously-skip-permissions -p -` | Full tool access. |
 | `codex` | `codex exec --dangerously-bypass-approvals-and-sandbox` | Full tool access. |
 | `opencode` | `opencode run --dangerously-skip-permissions` | Full tool access. |
-| `gemini` | `gemini -p ... --approval-mode {plan\|yolo}` | Read-only style `plan` mode for verify/review; `yolo` for fix. |
+| `agy` | `agy --dangerously-skip-permissions --add-dir <project> -p ...` | Antigravity CLI (Gemini's successor). Verify/review add `--sandbox` (terminal restrictions — not read-only). |
 
 These agent invocations are intentionally powerful. Run fixbuddy only against repositories and issue content you trust.
 
@@ -134,8 +134,8 @@ These agent invocations are intentionally powerful. Run fixbuddy only against re
 | `--label <name>` | Include only issues with this label. Repeatable | none |
 | `--severity <level>` | Include issues labeled `severity:<level>` | none |
 | `--max <n>` | Maximum issues to process in this run | unlimited |
-| `--fix-agent <agent>` | `claude`, `codex`, `opencode`, or `gemini` | `claude` |
-| `--review-agent <agent>` | `claude`, `codex`, `opencode`, or `gemini` | `codex` |
+| `--fix-agent <agent>` | `claude`, `codex`, `opencode`, or `agy` | `claude` |
+| `--review-agent <agent>` | `claude`, `codex`, `opencode`, or `agy` | `codex` |
 | `--max-retries <n>` | Retry count after review rejection | `1` |
 | `--agent-timeout <secs>` | Wall-clock timeout per agent call | `1200` |
 | `--crash-abort <n>` | Abort after consecutive agent crashes | `3` |
@@ -275,11 +275,11 @@ Use one agent for both roles:
   --fix-agent claude --review-agent claude --max 3
 ```
 
-Use Gemini as a read-only reviewer:
+Use agy (Antigravity CLI) as a cross-vendor reviewer:
 
 ```bash
 ./fixbuddy.sh --repo owner/repo --project ~/code/repo \
-  --fix-agent claude --review-agent gemini
+  --fix-agent claude --review-agent agy
 ```
 
 ## Use in GitHub Actions
@@ -343,7 +343,7 @@ If `github-token` is empty the action fails fast with a clear error. Pass a diff
 
 ### Prerequisites in CI
 
-GitHub-hosted runners do **not** ship the agent CLIs (`claude`, `codex`, `opencode`, `gemini`). Install whichever ones you pass to `fix-agent` / `review-agent` in a step *before* the `Codevena/fixbuddy` step — pinning them to a known version is recommended. Consult each agent's own documentation for the current install command.
+GitHub-hosted runners do **not** ship the agent CLIs (`claude`, `codex`, `opencode`, `agy`). Install whichever ones you pass to `fix-agent` / `review-agent` in a step *before* the `Codevena/fixbuddy` step — pinning them to a known version is recommended. Consult each agent's own documentation for the current install command. Note that `agy` has no npm package — install it with the vendor script: `curl -fsSL https://antigravity.google/cli/install.sh | bash`.
 
 The action does not read API keys itself; each agent CLI reads its own environment variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and so on). Provide them from `secrets` at the job or workflow level, as shown above.
 
@@ -392,7 +392,6 @@ Native Windows is not tested. WSL2 is the recommended Windows environment.
 
 ## Roadmap
 
-- More deterministic integration tests with mocked CLIs
 - Optional notifications for run summaries
 - Explicit resume mode for interrupted runs (interrupting a run cleans up the in-progress branch; the issue is retried automatically on the next run)
 

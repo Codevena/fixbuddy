@@ -1,24 +1,19 @@
 # Next session
 
-**v0.6.0 is released** (2026-06-12): the retired `gemini` agent was replaced by
-`agy` (Antigravity CLI — Gemini CLI shuts down 2026-06-18), the read-only
-pipeline stages got deterministic guards, and an offline integration test suite
-landed. PR #9, merged to `main`.
+v0.7.0 is implemented on branch `feat/notify-cmd-v0.7.0`: the `--notify-cmd`
+run-summary notification hook (additive config key `notify_cmd`), plus the
+roadmap cleanup — explicit resume mode is intentionally not built (the label
+system already resumes interrupted runs; documented in a new FAQ entry).
 
 ## Status snapshot
 
-- `main` is at the v0.6.0 merge; tags `v0.6.0` and floating `v1` both point at
-  it. GitHub release published; CI green; install one-liner verified end-to-end
-  against the fresh tag (checksums OK, `fixbuddy.sh --version` → 0.6.0).
-- Spec: `docs/superpowers/specs/2026-06-12-agy-agent-and-integration-tests-design.md`
-  (includes verified agy CLI facts: no read-only mode, `--sandbox` = terminal
-  restrictions only, `--print-timeout` default 5m with **exit code 0** on timeout).
-- Plan: `docs/superpowers/plans/2026-06-12-agy-agent-and-integration-tests.md`.
-- Tests: `tests/integration.sh` — 14 offline scenarios (stub `gh`/agent CLIs,
-  local bare-repo origin, real git pushes). Runs as the CI `integration` job.
-- Audit history: `docs/audit/2026-06-10-findings.md` (all 18 findings fixed).
+- Branch `feat/notify-cmd-v0.7.0`, awaiting DoD gate / merge / tag.
+- Spec: `docs/superpowers/specs/2026-06-12-notify-cmd-design.md`
+- Plan: `docs/superpowers/plans/2026-06-12-notify-cmd.md`
+- Tests: `tests/integration.sh` — 19 offline scenarios, runs in CI.
+- v0.6.0 (agy migration + read-only-stage guards) is released and tagged.
 
-## Release checklist (for the NEXT release)
+## Release checklist (per release)
 
 1. Bump `VERSION` in `fixbuddy.sh` (+ header), wizard header/banner,
    `install.sh` `DEFAULT_REF`, README one-liners; update `CHANGELOG.md`.
@@ -26,12 +21,11 @@ landed. PR #9, merged to `main`.
    SHA256SUMS`) — `install.sh` verifies fail-closed.
 3. Merge via PR; then `git tag vX.Y.Z && git push origin vX.Y.Z` and
    `git tag -f v1 vX.Y.Z && git push origin v1 --force`.
-4. `gh release create vX.Y.Z` (the repo has release pages; "Latest" should
-   track the newest tag). Smoke-test the install one-liner against the tag.
+4. `gh release create vX.Y.Z` ("Latest" should track the newest tag) and
+   smoke-test the install one-liner against the fresh tag.
 
-## What's next (README Roadmap)
+## What's next
 
-- Optional notifications for run summaries
-- Explicit resume mode for interrupted runs
-
-Pick one and run it through the brainstorm → plan → DoD-gate flow.
+The README roadmap is empty — pick new goals next session. Ideas raised but
+not committed: notify-cmd input for the GitHub Action, log retention/pruning
+for `~/.fixbuddy/runs`, more agents as they appear.

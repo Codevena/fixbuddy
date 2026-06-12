@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy v0.6.0 — two-agent pipeline for autonomous issue fixing
+# fixbuddy v0.7.0 — two-agent pipeline for autonomous issue fixing
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -31,6 +31,10 @@
 #                             after the fix commit and before review; a non-zero exit is
 #                             treated like a review rejection (retried, then fix:rejected).
 #                             Commands are OPERATOR-TRUSTED and run via the shell.
+#   --notify-cmd <cmd>        Run-summary notification hook (repeatable). Runs in the
+#                             LAUNCH directory after the final summary (also after a
+#                             crash-abort); gets FIXBUDDY_* env vars + a text summary
+#                             on stdin. OPERATOR-TRUSTED and run via the shell.
 #   --max-retries <n>         Fix retries after review rejection (default: 1 → 2 total attempts)
 #   --agent-timeout <secs>    Wall-clock timeout per agent invocation (default: 1200 = 20min)
 #   --crash-abort <n>         Abort batch after N consecutive agent crashes (default: 3)
@@ -42,12 +46,12 @@
 #   --yes, -y                 Skip confirmation
 #
 # Config files (key = value, parsed without eval; CLI flags override):
-#   ~/.fixbuddy/config (global), then ./.fixbuddy.conf (cwd). label and check_cmd are
-#   ADDITIVE: config and CLI entries combine (labels become an AND filter), and a
-#   config-provided label/check cannot be removed from the CLI.
+#   ~/.fixbuddy/config (global), then ./.fixbuddy.conf (cwd). label, check_cmd, and
+#   notify_cmd are ADDITIVE: config and CLI entries combine (labels become an AND
+#   filter), and a config-provided label/check/notify cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.6.0"
+VERSION="0.7.0"
 
 # -------- Defaults --------
 REPO=""
@@ -55,6 +59,7 @@ PROJECT=""
 LABELS=()
 ISSUES=()
 CHECK_CMDS=()
+NOTIFY_CMDS=()
 SEVERITY=""
 MAX=""
 FIX_AGENT="claude"
@@ -142,6 +147,7 @@ load_config() {
         esac ;;
       label)     LABELS+=("$value") ;;
       check_cmd) CHECK_CMDS+=("$value") ;;
+      notify_cmd) NOTIFY_CMDS+=("$value") ;;
       *) warn "unknown config key '$key' in $file (ignored)" ;;
     esac
   done < "$file"
@@ -162,6 +168,7 @@ while [ $# -gt 0 ]; do
     --fix-agent) FIX_AGENT="$2"; shift 2 ;;
     --review-agent) REVIEW_AGENT="$2"; shift 2 ;;
     --check-cmd) CHECK_CMDS+=("$2"); shift 2 ;;
+    --notify-cmd) NOTIFY_CMDS+=("$2"); shift 2 ;;
     --max-retries) MAX_RETRIES="$2"; shift 2 ;;
     --agent-timeout) AGENT_TIMEOUT="$2"; shift 2 ;;
     --crash-abort) CRASH_ABORT_THRESHOLD="$2"; shift 2 ;;
@@ -171,7 +178,7 @@ while [ $# -gt 0 ]; do
     --skip-label) SKIP_LABEL="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     -y|--yes) AUTO_YES=true; shift ;;
-    -h|--help) sed -n '2,47p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,51p' "$0"; exit 0 ;;
     --version) echo "fixbuddy $VERSION"; exit 0 ;;
     *) err "Unknown arg: $1"; exit 2 ;;
   esac
@@ -624,6 +631,39 @@ run_checks() {
   return 0
 }
 
+# Run the operator-supplied --notify-cmd hook(s) with the final run summary.
+# Commands are trusted (CLI/config level, like --check-cmd) and run via the
+# shell in the LAUNCH directory — not $PROJECT; notifications are about the
+# run, not the checkout. Each command gets the summary as FIXBUDDY_* env vars
+# plus a human-readable text on stdin. A failure warns and never changes
+# fixbuddy's exit code; the remaining commands still run. Output is appended
+# to $log_root/notify.log.
+run_notifications() {
+  [ "${#NOTIFY_CMDS[@]}" -gt 0 ] || return 0
+  local summary cmd rc abort_note=""
+  if [ "$aborted" = "true" ]; then
+    abort_note="Batch ABORTED after consecutive agent crashes.
+"
+  fi
+  summary="fixbuddy v$VERSION run on $REPO
+Processed: $processed | Merged: $merged | PRs opened: $opened
+False positives: $fp | Blocked: $blocked | Rejected: $rejected
+${abort_note}Logs: $log_root"
+  for cmd in "${NOTIFY_CMDS[@]}"; do
+    printf '%s\n' "$summary" | (
+      export FIXBUDDY_REPO="$REPO" FIXBUDDY_PROCESSED="$processed" \
+        FIXBUDDY_MERGED="$merged" FIXBUDDY_PR_OPENED="$opened" \
+        FIXBUDDY_FALSE_POSITIVES="$fp" FIXBUDDY_BLOCKED="$blocked" \
+        FIXBUDDY_REJECTED="$rejected" FIXBUDDY_ABORTED="$aborted" \
+        FIXBUDDY_LOG_DIR="$log_root" FIXBUDDY_VERSION="$VERSION"
+      eval "$cmd"
+    ) >>"$log_root/notify.log" 2>&1
+    rc=$?
+    [ "$rc" -ne 0 ] && warn "notify command failed (exit $rc): $cmd"
+  done
+  return 0
+}
+
 # Interrupt handler — on Ctrl-C/SIGTERM, stop the in-flight agent and leave the LOCAL repo
 # in a clean state so the next run resumes. No label is set: an interrupted issue simply
 # stays in the queue. cleanup_branch is local-only (stash + checkout base + delete LOCAL
@@ -907,6 +947,7 @@ opened=0
 fp=0
 blocked=0
 rejected=0
+aborted=false
 
 process_issue() {
   local num="$1" title="$2" body="$3"
@@ -1306,6 +1347,7 @@ while IFS= read -r issue; do
     err "Next steps:"
     err "  • Wait for recovery and rerun — issues marked fix:blocked auto-requeue."
     err "  • Or rerun with --review-agent $([ "$REVIEW_AGENT" = codex ] && echo claude || echo codex) as a fallback."
+    aborted=true
     break
   fi
 done < <(echo "$filtered" | jq -c '.[]')
@@ -1323,3 +1365,5 @@ ok   "False positives:  $fp"
 warn "Blocked:          $blocked"
 err  "Rejected:         $rejected"
 info "Logs: $log_root"
+
+run_notifications

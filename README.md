@@ -57,15 +57,15 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 Install with the one-liner (macOS and Linux, including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.6.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.0/install.sh | bash
 ```
 
-This downloads the pinned `v0.6.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+This downloads the pinned `v0.7.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
 
 **Prefer to read before you run?** The installer is short — inspect it first, then run it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.6.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.0/install.sh -o install.sh
 less install.sh        # read it
 bash install.sh        # then run it
 ```
@@ -142,6 +142,7 @@ These agent invocations are intentionally powerful. Run fixbuddy only against re
 | `--base <branch>` | PR base branch | auto-detect |
 | `--issue <N>` | Process only this issue number. Repeatable; dedup filters and `--label`/`--severity` still apply. Warns for requested numbers that are not found, closed, or already labeled non-actionable | none |
 | `--check-cmd <cmd>` | Shell command to run as a test gate after each fix commit and before review. Repeatable. A non-zero exit is treated as a review rejection: output is fed back to the fix agent and the attempt is retried; if the retry budget is exhausted the issue is labeled `fix:rejected`. Because review and PR are only reached after all checks pass, checks also gate auto-merge. Commands run in `$PROJECT` and are operator-trusted (same trust level as CLI flags) | none |
+| `--notify-cmd <cmd>` | Run-summary notification hook. Repeatable. Runs in the **launch** directory after the final summary (also after a crash-abort), receiving `FIXBUDDY_*` env vars (counts, `FIXBUDDY_ABORTED`, `FIXBUDDY_LOG_DIR`) and a human-readable summary on stdin. A failure warns but never changes the exit code. Not fired for `--dry-run`, empty queues, or Ctrl-C. Operator-trusted (same trust level as CLI flags) | none |
 | `--auto-merge` | Enable auto-merge, overriding a config `auto_merge = false` | off |
 | `--no-auto-merge` | Open PRs without requesting auto-merge | off |
 | `--skip-label <label>` | Skip issues with this label | `fix:applied` |
@@ -170,6 +171,7 @@ auto_merge  = true
 label       = bug
 check_cmd   = pnpm test
 check_cmd   = pnpm typecheck
+notify_cmd  = curl -s -d @- ntfy.sh/my-topic
 ```
 
 **Allowlisted keys** (unknown keys warn and are ignored):
@@ -190,10 +192,11 @@ check_cmd   = pnpm typecheck
 | `auto_merge` | `--auto-merge` / `--no-auto-merge` | accepts `true` or `false` |
 | `label` | `--label` | additive (see below) |
 | `check_cmd` | `--check-cmd` | additive (see below) |
+| `notify_cmd` | `--notify-cmd` | additive (see below) |
 
-**Scalar keys** (all keys except `label` and `check_cmd`): CLI value wins; last writer wins across config files (project overrides global).
+**Scalar keys** (all keys except `label`, `check_cmd`, and `notify_cmd`): CLI value wins; last writer wins across config files (project overrides global).
 
-**Additive keys** (`label`, `check_cmd`): config entries and CLI entries are combined, not replaced. A config `label = bug` plus `--label security` on the CLI results in an AND filter for both labels. There is no way to remove a config-provided label or check command from the CLI.
+**Additive keys** (`label`, `check_cmd`, `notify_cmd`): config entries and CLI entries are combined, not replaced. A config `label = bug` plus `--label security` on the CLI results in an AND filter for both labels. There is no way to remove a config-provided label, check, or notify command from the CLI.
 
 **Security note:** config files are operator-controlled and parsed without `eval` or `source`. Values are assigned as plain strings, so a config containing shell metacharacters (e.g. `$(...)`) cannot execute code. `check_cmd` entries are run by fixbuddy itself, consistent with the same operator-trust model as CLI flags — only issue *content* is treated as untrusted input.
 
@@ -282,6 +285,13 @@ Use agy (Antigravity CLI) as a cross-vendor reviewer:
 ```bash
 ./fixbuddy.sh --repo owner/repo --project ~/code/repo \
   --fix-agent claude --review-agent agy
+```
+
+Get a push notification when an unattended batch finishes (anything that reads stdin works — ntfy, a Slack webhook, `mail`):
+
+```bash
+./fixbuddy.sh --repo owner/repo --project ~/code/repo --max 10 \
+  --notify-cmd 'curl -s -d @- ntfy.sh/my-fixbuddy-topic'
 ```
 
 ## Use in GitHub Actions
@@ -386,16 +396,14 @@ The PR remains open with `fix:pr-open`. GitHub will merge it later if branch pro
 **What happens if CI fails?**
 The PR stays open. The issue keeps `fix:pr-open`, so a later fixbuddy run does not create a duplicate PR.
 
+**What happens if I interrupt a run (Ctrl-C)?**
+The in-flight agent is stopped and the local branch is cleaned up; no label is set, so the issue simply stays in the queue. There is no separate resume mode because the labels already provide it: the next run picks up where the last one stopped (`fix:blocked` re-queues automatically, `fix:pr-open` prevents duplicate PRs).
+
 **Can I use fixbuddy in GitHub Actions?**
 Yes — use the composite action with `uses: Codevena/fixbuddy@v1`. See [Use in GitHub Actions](#use-in-github-actions) for the workflow snippet, required `permissions:` block, and CI prerequisites.
 
 **Does it support Windows?**
 Native Windows is not tested. WSL2 is the recommended Windows environment.
-
-## Roadmap
-
-- Optional notifications for run summaries
-- Explicit resume mode for interrupted runs (interrupting a run cleans up the in-progress branch; the issue is retried automatically on the next run)
 
 ## Contributing
 

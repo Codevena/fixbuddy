@@ -224,6 +224,59 @@ test_reviewer_residue_cleaned_before_retry() {
   [ "$(grep -c '^claude:fix$' "$STAGELOG")" -eq 2 ] || fail "expected 2 fix attempts"
 }
 
+test_notify_cmd_receives_summary() {
+  # Notify commands run in the LAUNCH directory ($TMP) and get the summary as
+  # FIXBUDDY_* env vars plus human-readable text on stdin. Both commands run.
+  SCENARIO=happy; make_fixture
+  run_fixbuddy --auto-merge \
+    --notify-cmd 'env | grep ^FIXBUDDY_ | sort > notify-env.txt; cat > notify-stdin.txt' \
+    --notify-cmd 'echo second > notify-second.txt'
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_REPO=acme/app"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_PROCESSED=1"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_PR_OPENED=1"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_MERGED=0"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_BLOCKED=0"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_ABORTED=false"
+  assert_substr "$TMP/notify-stdin.txt" "PRs opened: 1"
+  [ -f "$TMP/notify-second.txt" ] || fail "second notify command did not run"
+}
+
+test_notify_failure_does_not_break_run() {
+  SCENARIO=happy; make_fixture
+  run_fixbuddy --auto-merge --notify-cmd 'exit 7' \
+    --notify-cmd 'echo ran > notify-after-fail.txt'
+  [ "$RC" -eq 0 ] || fail "notify failure changed the exit code (rc=$RC)"
+  assert_grep "$RUNLOG" 'notify command failed \(exit 7\)'
+  [ -f "$TMP/notify-after-fail.txt" ] || fail "subsequent notify command did not run"
+}
+
+test_notify_reports_blocked() {
+  # One crash (below the abort threshold): BLOCKED=1, ABORTED=false.
+  SCENARIO=crash; make_fixture
+  run_fixbuddy --auto-merge --notify-cmd 'env | grep ^FIXBUDDY_ > notify-env.txt'
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_BLOCKED=1"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_ABORTED=false"
+}
+
+test_notify_cmd_from_config() {
+  # notify_cmd is an additive config key, read from the launch dir like the
+  # other config keys.
+  SCENARIO=happy; make_fixture
+  printf 'notify_cmd = echo config-notify > notify-config.txt\n' > "$TMP/.fixbuddy.conf"
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  [ -f "$TMP/notify-config.txt" ] || fail "config notify_cmd did not run"
+}
+
+test_notify_skipped_on_dry_run() {
+  SCENARIO=happy; make_fixture
+  run_fixbuddy --dry-run --notify-cmd 'echo nope > notify-dry.txt'
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  [ ! -f "$TMP/notify-dry.txt" ] || fail "notify fired during --dry-run"
+}
+
 # ---------------- Runner ----------------
 
 TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
@@ -232,7 +285,10 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_agy_internal_timeout_is_blocked
        test_verify_residue_is_stashed test_verify_commit_is_discarded
        test_verify_residue_cleaned_on_early_return
-       test_reviewer_commit_is_discarded test_reviewer_residue_cleaned_before_retry)
+       test_reviewer_commit_is_discarded test_reviewer_residue_cleaned_before_retry
+       test_notify_cmd_receives_summary test_notify_failure_does_not_break_run
+       test_notify_reports_blocked test_notify_cmd_from_config
+       test_notify_skipped_on_dry_run)
 
 for t in "${TESTS[@]}"; do
   CURRENT="$t"

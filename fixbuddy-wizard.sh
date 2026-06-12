@@ -53,7 +53,7 @@ done
 
 # Agent CLIs — track which are available so we can offer only the installed ones.
 AGENTS_AVAILABLE=()
-for a in claude codex opencode gemini; do
+for a in claude codex opencode agy; do
   if command -v "$a" >/dev/null 2>&1; then
     ok "$a found"
     AGENTS_AVAILABLE+=("$a")
@@ -63,7 +63,7 @@ for a in claude codex opencode gemini; do
 done
 
 if [ "${#AGENTS_AVAILABLE[@]}" -eq 0 ]; then
-  fail "no agent CLI installed — need at least one of: claude, codex, opencode, gemini"
+  fail "no agent CLI installed — need at least one of: claude, codex, opencode, agy"
   missing=1
 fi
 
@@ -193,14 +193,12 @@ is_available() {
 }
 
 step "7a." "Which agent writes the fixes?"
-note "claude is the most reliable fixer; codex and opencode are strong alternatives."
-note "gemini is read-only-ish and not recommended as a fixer."
+note "claude is the most reliable fixer; codex, opencode, and agy are strong alternatives."
 FIX_CHOICES=()
 n=1
-for a in claude codex opencode gemini; do
+for a in claude codex opencode agy; do
   if is_available "$a"; then
     label="$a"
-    [ "$a" = "gemini" ] && label="$a   ${DIM}(experimental — often writes incomplete fixes)${RST}"
     printf "  [%d] %b\n" "$n" "$label"
     FIX_CHOICES+=("$a")
     n=$((n+1))
@@ -218,14 +216,14 @@ ok "fix agent: $FIX_AGENT"
 # -------- Step 7b: reviewer --------
 step "7b." "Which reviewer agent?"
 note "Cross-agent review (different from the fixer) catches more bugs."
-note "gemini in review mode runs read-only — safer but less thorough."
+note "agy runs verify/review with a sandbox (terminal restrictions)."
 REV_CHOICES=()
 n=1
-for a in codex claude opencode gemini; do
+for a in codex claude opencode agy; do
   if is_available "$a"; then
     label="$a"
     [ "$a" = "$FIX_AGENT" ] && label="$a   ${DIM}(same-agent — less adversarial)${RST}"
-    [ "$a" = "gemini" ]    && label="$a   ${DIM}(read-only, experimental — quick second opinion)${RST}"
+    [ "$a" = "agy" ]       && label="$a   ${DIM}(sandboxed verify/review)${RST}"
     printf "  [%d] %b\n" "$n" "$label"
     REV_CHOICES+=("$a")
     n=$((n+1))

@@ -62,6 +62,11 @@ case "$scenario:$stage" in
     echo "DONE-REJECTED: the fix lacks a regression test" ;;
   falsepos:verify)
     echo "DONE-FALSE-POSITIVE: the code already behaves correctly" ;;
+  fpdirty:verify)
+    ( cd "$project" && echo "scratch" > junk.txt \
+      && echo "more" >> src/app.txt \
+      && git add junk.txt && git commit -q -m "rogue verify commit" )
+    echo "DONE-FALSE-POSITIVE: stale finding" ;;
   crash:verify)
     echo "transport error: connection reset"
     exit 1 ;;

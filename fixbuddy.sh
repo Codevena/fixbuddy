@@ -554,6 +554,38 @@ run_agent() {
 # -------- Crash handling helpers --------
 is_crash() { [ "$1" -eq 124 ] || [ "$1" -eq 125 ]; }
 
+# Verify is contractually read-only, but no agent CLI enforces that (agy's
+# --sandbox still allows workspace writes; claude/codex/opencode run with
+# permission checks skipped). The tree was clean at startup, so anything dirty
+# after the verify agent returns is verify residue. Called for EVERY verify
+# outcome (proceed, false-positive, blocked, missing marker, crash) so no
+# return path leaves residue in the operator checkout.
+#
+# Args: issue_num, pre-verify base-ref commit (may be empty)
+cleanup_verify_residue() {
+  local num="$1" pre_base="$2"
+  if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
+    warn "[#$num] verify stage left worktree changes — stashing residue"
+    (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-verify-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || true
+  fi
+  # Pin the base ref back if the verify stage committed on it (a commit leaves
+  # the worktree clean, so the stash above cannot catch it). Runs AFTER the
+  # stash so a reset never touches uncommitted files; the discarded commits
+  # stay recoverable via the reflog.
+  if [ -n "$pre_base" ] \
+     && [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)" != "$pre_base" ]; then
+    warn "[#$num] verify stage created commits on $BASE_BRANCH — resetting to pre-verify state"
+    (
+      cd "$PROJECT" || exit 0
+      if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BASE_BRANCH" ]; then
+        git reset --hard "$pre_base" >/dev/null 2>&1
+      else
+        git branch -f "$BASE_BRANCH" "$pre_base" >/dev/null 2>&1
+      fi
+    ) || true
+  fi
+}
+
 cleanup_branch() {
   local num="$1" branch="$2" reason="$3"
   [ -n "$branch" ] || return 0
@@ -901,6 +933,10 @@ process_issue() {
   out=$(run_agent "$FIX_AGENT" "$(verify_prompt "$num" "$title" "$body")" "$issue_log" verify)
   rc=$?
 
+  # Runs before any outcome handling so every return path (crash included)
+  # leaves the operator checkout clean.
+  cleanup_verify_residue "$num" "$pre_verify_base"
+
   if is_crash "$rc"; then
     handle_agent_crash "$num" "verify" "$rc" ""
     return 0
@@ -937,32 +973,6 @@ The \`fix:needs-human\` label has been applied. This issue requires human attent
     gh issue edit "$num" --repo "$REPO" --add-label "fix:needs-human" >/dev/null 2>&1 || true
     blocked=$((blocked+1))
     return 0
-  fi
-
-  # Verify is contractually read-only, but no agent CLI enforces that (agy's
-  # --sandbox still allows workspace writes; claude/codex/opencode run with
-  # permission checks skipped). The tree was clean at startup, so anything
-  # dirty here is verify-stage residue — stash it so it can never leak into
-  # the fix branch or commit. Recoverable via `git stash list`.
-  if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
-    warn "[#$num] verify stage left worktree changes — stashing residue"
-    (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-verify-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || true
-  fi
-
-  # Pin the base ref back if the verify stage moved it (committed on the base
-  # branch). Runs AFTER the stash above so a reset never touches uncommitted
-  # files; the discarded commits stay recoverable via the reflog.
-  if [ -n "$pre_verify_base" ] \
-     && [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)" != "$pre_verify_base" ]; then
-    warn "[#$num] verify stage created commits on $BASE_BRANCH — resetting to pre-verify state"
-    (
-      cd "$PROJECT" || exit 0
-      if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BASE_BRANCH" ]; then
-        git reset --hard "$pre_verify_base" >/dev/null 2>&1
-      else
-        git branch -f "$BASE_BRANCH" "$pre_verify_base" >/dev/null 2>&1
-      fi
-    ) || true
   fi
 
   # ---- Stage 2+3: FIX + REVIEW (with retry) ----

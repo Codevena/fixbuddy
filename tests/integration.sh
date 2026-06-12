@@ -172,6 +172,20 @@ test_verify_residue_is_stashed() {
   assert_no_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
 }
 
+test_verify_residue_cleaned_on_early_return() {
+  # The verify guards must run on EVERY outcome, not only PROCEED: here the
+  # verify agent dirties the tree AND commits on base, then reports a false
+  # positive. The operator checkout must come out clean regardless.
+  SCENARIO=fpdirty; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue close 7'
+  [ -z "$(git -C "$TMP/project" status --porcelain)" ] \
+    || fail "verify residue left in the worktree"
+  [ "$(git -C "$TMP/project" rev-parse refs/heads/main)" = "$(git -C "$TMP/origin.git" rev-parse refs/heads/main)" ] \
+    || fail "verify commit left on the base branch"
+}
+
 test_verify_commit_is_discarded() {
   # A verify agent that COMMITS (the worktree stays clean, so the residue
   # stash cannot catch it) must not get that commit into the fix branch: the
@@ -205,6 +219,7 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_agy_full_pipeline test_gemini_rejected_with_migration_hint
        test_agy_internal_timeout_is_blocked
        test_verify_residue_is_stashed test_verify_commit_is_discarded
+       test_verify_residue_cleaned_on_early_return
        test_reviewer_commit_is_discarded)
 
 for t in "${TESTS[@]}"; do

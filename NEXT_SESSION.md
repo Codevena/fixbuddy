@@ -1,25 +1,39 @@
 # Next session
 
-All P0/P1 review items and the full P2 backlog (#6 repo topics, #7 `install.sh`, #8 GitHub Action wrapper) are done.
+v0.6.0 is implemented on branch `feat/agy-agent-v0.6.0`: the retired `gemini`
+agent is replaced by `agy` (Antigravity CLI — Gemini CLI shuts down 2026-06-18)
+and a deterministic offline integration test suite landed.
 
 ## Status snapshot
 
-- Branch `main`, working tree clean.
-- **`v0.4.0` is tagged and pushed**, with a floating **`v1`** ref pointing at it. Consumers use `uses: Codevena/fixbuddy@v1`.
-- `action.yml` (composite action, pure bash) + `.github/workflows/action-smoke.yml` (dry-run smoke test) shipped in #8. README has a "Use in GitHub Actions" section.
-- `fixbuddy.sh` `--dry-run` skips the agent-CLI presence check (agent-name validation still runs) so the smoke test works on bare runners.
-- `install.sh` pins `DEFAULT_REF="v0.4.0"`; README Quick Start one-liner points at `v0.4.0`.
-- `SHA256SUMS` holds hashes of `fixbuddy.sh` + `fixbuddy-wizard.sh`. **Regenerate it (`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh > SHA256SUMS`) whenever either script changes, before cutting a new tag** — `install.sh` verifies checksums and fails closed.
-- When cutting a new release: bump `VERSION` in `fixbuddy.sh`, the header comment, `install.sh` `DEFAULT_REF`, the README one-liner; regenerate `SHA256SUMS`; tag `vX.Y.Z`; then `git tag -f v1 vX.Y.Z && git push origin v1 --force` to move the floating major ref.
-- Definition-of-Done gate from `~/.claude/CLAUDE.md` still applies. Note from #8: `codex exec` hung at 0% CPU again — the OpenCode fallback (`opencode run --dangerously-skip-permissions "$(<file)"`) worked. Write reviewer prompts with the Write tool, not Bash heredocs.
+- Branch `feat/agy-agent-v0.6.0`, all work committed; awaiting merge to `main`
+  and the release tag.
+- Spec: `docs/superpowers/specs/2026-06-12-agy-agent-and-integration-tests-design.md`
+  (includes the locally verified agy CLI behavior: no read-only mode, `--sandbox`
+  semantics, `--print-timeout` default 5m with **exit code 0** on timeout).
+- Plan: `docs/superpowers/plans/2026-06-12-agy-agent-and-integration-tests.md`.
+- Tests: `tests/integration.sh` — 9 scenarios against stubbed `gh`/agent CLIs and
+  a local bare-repo origin. Runs in CI (`integration` job) alongside shellcheck.
+- Audit history moved to `docs/audit/2026-06-10-findings.md` (all 18 findings
+  fixed in v0.5.0).
 
-## What's next
+## Release checklist (v0.6.0)
 
-P2 is complete. Remaining work lives in the README **Roadmap**:
+Version bumps, CHANGELOG, and `SHA256SUMS` are already done on the branch. After
+merge to `main`:
 
-- Config file support
-- More deterministic integration tests with mocked CLIs
+1. `git tag v0.6.0 && git push origin v0.6.0`
+2. `git tag -f v1 v0.6.0 && git push origin v1 --force` (floating major ref for
+   `uses: Codevena/fixbuddy@v1`)
+3. Verify the CI + action-smoke workflows are green on `main`.
+
+Remember for future releases: regenerate `SHA256SUMS`
+(`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh > SHA256SUMS`) whenever either
+script changes, before tagging — `install.sh` verifies checksums fail-closed.
+
+## What's next (README Roadmap)
+
 - Optional notifications for run summaries
 - Explicit resume mode for interrupted runs
 
-Pick one and run it through the brainstorm → plan → DoD-gate flow. Verify the action-smoke workflow went green on GitHub after the v0.4.0 push.
+Pick one and run it through the brainstorm → plan → DoD-gate flow.

@@ -57,15 +57,15 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 Install with the one-liner (macOS and Linux, including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.5.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.6.0/install.sh | bash
 ```
 
-This downloads the pinned `v0.5.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+This downloads the pinned `v0.6.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
 
 **Prefer to read before you run?** The installer is short — inspect it first, then run it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.5.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.6.0/install.sh -o install.sh
 less install.sh        # read it
 bash install.sh        # then run it
 ```

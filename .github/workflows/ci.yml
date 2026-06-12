@@ -19,9 +19,20 @@ jobs:
         run: |
           bash -n fixbuddy.sh
           bash -n fixbuddy-wizard.sh
+          bash -n tests/integration.sh tests/stubs/agent tests/stubs/gh
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: ShellCheck
-        run: shellcheck fixbuddy.sh fixbuddy-wizard.sh
+        run: shellcheck fixbuddy.sh fixbuddy-wizard.sh tests/integration.sh tests/stubs/agent tests/stubs/gh
+
+  integration:
+    name: Integration tests (mocked CLIs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run integration tests
+        run: tests/integration.sh

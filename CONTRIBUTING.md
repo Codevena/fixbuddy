@@ -21,8 +21,12 @@ Run these before opening a pull request:
 ```bash
 bash -n fixbuddy.sh
 bash -n fixbuddy-wizard.sh
-shellcheck fixbuddy.sh fixbuddy-wizard.sh
+shellcheck fixbuddy.sh fixbuddy-wizard.sh tests/integration.sh tests/stubs/agent tests/stubs/gh
+tests/integration.sh
 ```
+
+`tests/integration.sh` runs the full pipeline offline against stubbed `gh`/agent
+CLIs and a local bare repository — no network, no API keys, a few seconds.
 
 If `shellcheck` is not available locally, the GitHub Actions workflow will run it for pull requests.
 
@@ -36,7 +40,8 @@ If `shellcheck` is not available locally, the GitHub Actions workflow will run i
 
 ## Manual Test Checklist
 
-For behavior changes, test against a disposable repository when possible:
+Most of these paths are covered by `tests/integration.sh`; for behavior changes,
+additionally test against a disposable repository when possible:
 
 1. `--dry-run` lists expected issues.
 2. A false-positive verification closes or labels the issue correctly.

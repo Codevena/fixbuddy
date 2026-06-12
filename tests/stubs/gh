@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Deterministic test double for the GitHub CLI. Read-only queries return canned
+# JSON; every MUTATING call is appended verbatim to $FIXBUDDY_TEST_MUTLOG so
+# tests can assert exactly what fixbuddy would have changed on GitHub.
+set -u
+
+mutate() {
+  [ -n "${FIXBUDDY_TEST_MUTLOG:-}" ] && echo "$*" >> "$FIXBUDDY_TEST_MUTLOG"
+  return 0
+}
+
+case "${1:-} ${2:-}" in
+  "label create")  mutate "$@" ;;
+  "issue list")
+    case "$*" in
+      *"fix:pr-open"*) echo "[]" ;;  # unstick scan: nothing stuck
+      *) cat <<'JSON'
+[{"number":7,"title":"app outputs wrong text","labels":[{"name":"bug"},{"name":"severity:high"}],"url":"https://github.com/acme/app/issues/7","body":"src/app.txt should contain a fixed line. Please fix the output."}]
+JSON
+      ;;
+    esac ;;
+  "issue view")
+    cat <<'JSON'
+{"number":7,"title":"app outputs wrong text","labels":[{"name":"bug"},{"name":"severity:high"}],"url":"https://github.com/acme/app/issues/7","state":"OPEN","body":"src/app.txt should contain a fixed line. Please fix the output."}
+JSON
+    ;;
+  "issue edit"|"issue comment"|"issue close") mutate "$@" ;;
+  "pr create")  mutate "$@"; echo "https://github.com/acme/app/pull/12" ;;
+  "pr merge")   mutate "$@" ;;
+  "pr view")    echo "false" ;;   # not merged yet -> fix:pr-open path
+  "pr list")    echo "" ;;
+  "repo view")  echo "main" ;;
+  *) : ;;   # auth setup-git etc. -> no-op
+esac
+exit 0

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy v0.5.0 — two-agent pipeline for autonomous issue fixing
+# fixbuddy v0.6.0 — two-agent pipeline for autonomous issue fixing
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -23,10 +23,10 @@
 #                             directly; dedup filters and --label/--severity still apply.
 #   --severity <level>        Only issues with label severity:<level>
 #   --max <n>                 Stop after N issues processed
-#   --fix-agent <agent>       claude | codex | opencode | gemini (default: claude)
-#   --review-agent <agent>    claude | codex | opencode | gemini (default: codex — cross-agent)
-#                             Note: gemini runs read-only (--approval-mode plan) when
-#                             used as verify/review agent. Warned about as fix-agent.
+#   --fix-agent <agent>       claude | codex | opencode | agy (default: claude)
+#   --review-agent <agent>    claude | codex | opencode | agy (default: codex — cross-agent)
+#                             Note: agy (Antigravity CLI) runs verify/review with
+#                             --sandbox (terminal restrictions) as defense in depth.
 #   --check-cmd <cmd>         Deterministic test gate (repeatable). Run in the project dir
 #                             after the fix commit and before review; a non-zero exit is
 #                             treated like a review rejection (retried, then fix:rejected).
@@ -47,7 +47,7 @@
 #   config-provided label/check cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.5.0"
+VERSION="0.6.0"
 
 # -------- Defaults --------
 REPO=""
@@ -189,8 +189,13 @@ done
 # dry-run on a runner without any agent CLI installed).
 for agent in "$FIX_AGENT" "$REVIEW_AGENT"; do
   case "$agent" in
-    claude|codex|opencode|gemini) ;;
-    *) err "unsupported agent: $agent (valid: claude, codex, opencode, gemini)"; exit 2 ;;
+    claude|codex|opencode|agy) ;;
+    gemini)
+      err "agent 'gemini' is no longer supported: Google retired the Gemini CLI on 2026-06-18."
+      err "Install the Antigravity CLI (curl -fsSL https://antigravity.google/cli/install.sh | bash)"
+      err "and use 'agy' instead — also in fix_agent/review_agent config keys."
+      exit 2 ;;
+    *) err "unsupported agent: $agent (valid: claude, codex, opencode, agy)"; exit 2 ;;
   esac
 done
 
@@ -200,17 +205,9 @@ if ! $DRY_RUN; then
       claude)   command -v claude   >/dev/null || { err "claude CLI not found";   exit 2; } ;;
       codex)    command -v codex    >/dev/null || { err "codex CLI not found";    exit 2; } ;;
       opencode) command -v opencode >/dev/null || { err "opencode CLI not found"; exit 2; } ;;
-      gemini)   command -v gemini   >/dev/null || { err "gemini CLI not found";   exit 2; } ;;
+      agy)      command -v agy      >/dev/null || { err "agy CLI not found";      exit 2; } ;;
     esac
   done
-
-  # Gemini is less reliable at independent reasoning than claude/codex/opencode — when used
-  # as the fix-agent it sometimes commits incomplete patches. We allow it (user's choice)
-  # but nudge toward using it read-only (verify/review) where it's much safer.
-  if [ "$FIX_AGENT" = "gemini" ]; then
-    warn "gemini as fix-agent is experimental — it may produce incomplete or wrong fixes."
-    warn "Consider --fix-agent claude (or codex/opencode) with --review-agent gemini instead."
-  fi
 fi
 
 command -v gh >/dev/null || { err "gh CLI not found"; exit 2; }
@@ -461,11 +458,13 @@ run_agent() {
   local outfile
   outfile=$(mktemp)
 
-  # Gemini is restricted to read-only (plan mode) for verify/review — it should observe
-  # and report, not write. Only the fix stage grants --yolo (tool-use). Claude/codex/
-  # opencode manage their own permissions via their own flags.
-  local gem_mode="yolo"
-  case "$stage" in verify|review) gem_mode="plan" ;; esac
+  # agy (Antigravity CLI) has no read-only mode; verify/review add --sandbox
+  # (terminal restrictions) as defense in depth. --add-dir grants workspace access
+  # to the project (agents are launched from the operator's CWD, not $PROJECT).
+  # --print-timeout sits 60s ABOVE the fixbuddy watchdog so the watchdog always
+  # fires first and the timeout is classified rc=124 (fix:blocked, auto-requeue).
+  local agy_args=(--dangerously-skip-permissions --add-dir "$PROJECT" --print-timeout "$((AGENT_TIMEOUT+60))s")
+  case "$stage" in verify|review) agy_args+=(--sandbox) ;; esac
 
   # Launch agent pipeline in background; $! captures the PID of the last command.
   case "$agent" in
@@ -478,8 +477,8 @@ run_agent() {
     opencode)
       env -u GH_TOKEN -u GITHUB_TOKEN opencode run --dangerously-skip-permissions "$prompt" </dev/null >"$outfile" 2>&1 &
       ;;
-    gemini)
-      env -u GH_TOKEN -u GITHUB_TOKEN gemini -p "$prompt" --approval-mode "$gem_mode" --output-format text </dev/null >"$outfile" 2>&1 &
+    agy)
+      env -u GH_TOKEN -u GITHUB_TOKEN agy "${agy_args[@]}" -p "$prompt" </dev/null >"$outfile" 2>&1 &
       ;;
   esac
   local agent_pid=$!
@@ -516,6 +515,17 @@ run_agent() {
     rc=124
   fi
 
+  # agy exits 0 (!) when its own --print-timeout fires, printing this line
+  # instead of a DONE marker. Reclassify as timeout so the issue is labeled
+  # fix:blocked (auto-requeue) rather than the never-retried fix:needs-human.
+  # Normally unreachable (our --print-timeout sits above the watchdog) — belt
+  # and braces.
+  if [ "$agent" = "agy" ] && [ "$rc" -eq 0 ] \
+     && ! grep -qE '^DONE-' "$outfile" 2>/dev/null \
+     && grep -q '^Error: timed out waiting for response' "$outfile" 2>/dev/null; then
+    rc=124
+  fi
+
   # Detect agent crash — nonzero exit without any DONE-* marker.
   # Covers codex usage-limit (rc=1 + "You've hit your usage limit"), MCP transport
   # errors, and any other hard exit that prevents the agent from completing its task.
@@ -543,6 +553,38 @@ run_agent() {
 
 # -------- Crash handling helpers --------
 is_crash() { [ "$1" -eq 124 ] || [ "$1" -eq 125 ]; }
+
+# Verify is contractually read-only, but no agent CLI enforces that (agy's
+# --sandbox still allows workspace writes; claude/codex/opencode run with
+# permission checks skipped). The tree was clean at startup, so anything dirty
+# after the verify agent returns is verify residue. Called for EVERY verify
+# outcome (proceed, false-positive, blocked, missing marker, crash) so no
+# return path leaves residue in the operator checkout.
+#
+# Args: issue_num, pre-verify base-ref commit (may be empty)
+cleanup_verify_residue() {
+  local num="$1" pre_base="$2"
+  if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
+    warn "[#$num] verify stage left worktree changes — stashing residue"
+    (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-verify-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || true
+  fi
+  # Pin the base ref back if the verify stage committed on it (a commit leaves
+  # the worktree clean, so the stash above cannot catch it). Runs AFTER the
+  # stash so a reset never touches uncommitted files; the discarded commits
+  # stay recoverable via the reflog.
+  if [ -n "$pre_base" ] \
+     && [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)" != "$pre_base" ]; then
+    warn "[#$num] verify stage created commits on $BASE_BRANCH — resetting to pre-verify state"
+    (
+      cd "$PROJECT" || exit 0
+      if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BASE_BRANCH" ]; then
+        git reset --hard "$pre_base" >/dev/null 2>&1
+      else
+        git branch -f "$BASE_BRANCH" "$pre_base" >/dev/null 2>&1
+      fi
+    ) || true
+  fi
+}
 
 cleanup_branch() {
   local num="$1" branch="$2" reason="$3"
@@ -883,9 +925,17 @@ process_issue() {
 
   # ---- Stage 1: VERIFY ----
   info "[#$num] VERIFY"
-  local out rc
+  # Capture the base ref before verify: a verify agent that COMMITS leaves a
+  # clean worktree (the residue stash below cannot catch it), and branch setup
+  # would build fix/issue-N on top of that commit and push it.
+  local out rc pre_verify_base
+  pre_verify_base=$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)
   out=$(run_agent "$FIX_AGENT" "$(verify_prompt "$num" "$title" "$body")" "$issue_log" verify)
   rc=$?
+
+  # Runs before any outcome handling so every return path (crash included)
+  # leaves the operator checkout clean.
+  cleanup_verify_residue "$num" "$pre_verify_base"
 
   if is_crash "$rc"; then
     handle_agent_crash "$num" "verify" "$rc" ""
@@ -1043,11 +1093,41 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
       fi
     fi
 
+    # The reviewer is contractually read-only, but no agent CLI enforces that.
+    # Record the commit the diff was taken from so any commits the reviewer
+    # creates can be discarded — only the reviewed commit may ever be pushed.
+    local review_head
+    review_head=$(cd "$PROJECT" && git rev-parse HEAD)
+
     out=$(run_agent "$REVIEW_AGENT" "$(review_prompt "$num" "$title" "$body" "$diff")" "$issue_log" review)
     rc=$?
 
+    if [ -n "$review_head" ] && [ "$(cd "$PROJECT" && git rev-parse HEAD)" != "$review_head" ]; then
+      warn "[#$num] review stage created commits — resetting branch to the reviewed commit"
+      (cd "$PROJECT" && git reset --hard "$review_head") >/dev/null 2>&1 || true
+    fi
+
+    # Reviewer worktree residue (the tree was clean or stashed before review,
+    # so any dirt now is the reviewer's). Stash it on every outcome: on REJECT
+    # the retry would otherwise recreate the fix branch on a dirty tree (abort
+    # as fix:needs-human, or leak residue into the next attempt).
+    if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
+      warn "[#$num] review stage left worktree changes — stashing residue"
+      (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-review-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || true
+    fi
+
     if [ "$did_stash" = "1" ]; then
-      (cd "$PROJECT" && git stash pop --quiet) >/dev/null 2>&1 || warn "[#$num] 'git stash pop' failed — check 'git stash list'"
+      # The residue stash above may sit on top of the stack — pop the
+      # pre-review stash by its exact message, not blindly stash@{0}.
+      (
+        cd "$PROJECT" || exit 1
+        sid=$(git stash list 2>/dev/null | grep -m1 "fixbuddy-review-${num}\$" | cut -d: -f1)
+        if [ -n "$sid" ]; then
+          git stash pop --quiet "$sid"
+        else
+          git stash pop --quiet
+        fi
+      ) >/dev/null 2>&1 || warn "[#$num] 'git stash pop' failed — check 'git stash list'"
     fi
 
     if is_crash "$rc"; then

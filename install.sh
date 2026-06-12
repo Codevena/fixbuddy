@@ -2,12 +2,12 @@
 # install.sh — installer for fixbuddy (https://github.com/Codevena/fixbuddy)
 #
 # Quick install:
-#   curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.5.0/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.6.0/install.sh | bash
 #
 # Options (pass after the URL as: | bash -s -- <options>):
 #   --prefix PATH   Install into PATH instead of the auto-detected location
 #   --ref TAG       Install the fixbuddy scripts from a specific git ref.
-#                   Default: v0.5.0.  Use --ref main for the latest commit.
+#                   Default: v0.6.0.  Use --ref main for the latest commit.
 #   -y, --yes       Skip the sudo confirmation prompt
 #   -h, --help      Show this help and exit
 #
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 REPO_SLUG="Codevena/fixbuddy"
-DEFAULT_REF="v0.5.0"
+DEFAULT_REF="v0.6.0"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_SLUG}"
 SCRIPTS=(fixbuddy.sh fixbuddy-wizard.sh)
 
@@ -40,11 +40,11 @@ usage() {
   cat >&2 <<'EOF'
 install.sh — installer for fixbuddy
 
-  curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.5.0/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.6.0/install.sh | bash
 
 Options (pass as: | bash -s -- <options>):
   --prefix PATH   Install into PATH instead of the auto-detected location
-  --ref TAG       Install fixbuddy scripts from a specific git ref (default: v0.5.0;
+  --ref TAG       Install fixbuddy scripts from a specific git ref (default: v0.6.0;
                   use --ref main for the latest commit)
   -y, --yes       Skip the sudo confirmation prompt
   -h, --help      Show this help and exit

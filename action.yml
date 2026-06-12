@@ -15,11 +15,11 @@ inputs:
     required: false
     default: "."
   fix-agent:
-    description: "Fix agent: claude | codex | opencode | gemini"
+    description: "Fix agent: claude | codex | opencode | agy"
     required: false
     default: "claude"
   review-agent:
-    description: "Review agent: claude | codex | opencode | gemini"
+    description: "Review agent: claude | codex | opencode | agy"
     required: false
     default: "codex"
   severity:

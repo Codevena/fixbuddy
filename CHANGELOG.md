@@ -4,6 +4,38 @@ All notable changes to fixbuddy are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-06-12
+
+Google retires the Gemini CLI on 2026-06-18; its successor is the Antigravity
+CLI (`agy`). fixbuddy v0.6.0 swaps the agent and gains an offline integration
+test suite.
+
+### Added
+- **`agy` agent** (Antigravity CLI) as fix or review agent. Invocation details
+  that matter: `--add-dir <project>` (agents launch from the operator's CWD),
+  `--print-timeout` pinned 60s above `--agent-timeout` so fixbuddy's watchdog
+  classifies timeouts (agy itself exits 0 on its internal timeout — fixbuddy
+  also detects that output and treats it as `fix:blocked`/auto-requeue), and
+  `--sandbox` on verify/review as defense in depth (agy has no read-only mode).
+- **Integration tests** (`tests/integration.sh`) — deterministic, offline,
+  zero new dependencies: stub `gh`/agent CLIs plus a local bare repo as
+  `origin`, covering happy path, false positive, review rejection, check gate,
+  dry-run read-only, and crash classification. Run in CI.
+
+### Removed (breaking)
+- **`gemini` agent.** Passing `gemini` (flag or config) now exits with a
+  migration message. Replace `fix_agent`/`review_agent` values with `agy`.
+  Note: agy in verify/review runs sandboxed but NOT read-only — the old
+  `--approval-mode plan` has no equivalent in the Antigravity CLI.
+
+### Security & robustness
+- The two read-only-by-contract stages are now guarded deterministically (no
+  agent CLI offers an enforced read-only mode): after **every** verify outcome
+  (proceed, false positive, blocked, crash) worktree files the verify agent
+  wrote are stashed and commits it created on the base branch are discarded,
+  and the **review** branch is pinned to the reviewed commit — commits a
+  reviewer creates are discarded, so only the reviewed commit is ever pushed.
+
 ## [0.5.0] - 2026-06-12
 
 Security hardening from a full audit, plus five new features. No breaking changes
@@ -49,4 +81,5 @@ to existing flags.
 
 Predate this changelog. See the git history and the `v0.4.0` / `v0.3.2` tags.
 
+[0.6.0]: https://github.com/Codevena/fixbuddy/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Codevena/fixbuddy/compare/v0.4.0...v0.5.0

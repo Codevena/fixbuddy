@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Deterministic test double for the agent CLIs, symlinked as claude/codex/agy.
+# Behavior switches on the invoked name ($0) and $FIXBUDDY_TEST_SCENARIO. The
+# pipeline stage is detected from the prompt text (mirrors docs/demo/bin/agent).
+# Every invocation appends "<name>:<stage>" to $FIXBUDDY_TEST_STAGELOG; agy
+# invocations additionally record their argv and GH_TOKEN visibility to
+# $FIXBUDDY_TEST_AGYLOG so tests can assert on flags and env stripping.
+set -u
+
+name="$(basename "$0")"
+scenario="${FIXBUDDY_TEST_SCENARIO:-happy}"
+
+# claude/codex receive the prompt on stdin; agy receives it as the value after
+# -p, with all other flags positioned before it.
+prompt=""
+flags=""
+if [ "$name" = "agy" ]; then
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -p) prompt="${2:-}"; shift 2 ;;
+      --add-dir|--print-timeout) flags="$flags $1=${2:-}"; shift 2 ;;
+      *) flags="$flags $1"; shift ;;
+    esac
+  done
+else
+  prompt="$(cat)"
+fi
+
+stage="verify"
+case "$prompt" in
+  *"implementing a fix"*)               stage="fix" ;;
+  *"independent senior code reviewer"*) stage="review" ;;
+esac
+
+[ -n "${FIXBUDDY_TEST_STAGELOG:-}" ] && echo "$name:$stage" >> "$FIXBUDDY_TEST_STAGELOG"
+if [ "$name" = "agy" ] && [ -n "${FIXBUDDY_TEST_AGYLOG:-}" ]; then
+  echo "stage=$stage gh_token=${GH_TOKEN:-unset} args=$flags" >> "$FIXBUDDY_TEST_AGYLOG"
+fi
+
+# The fix stage makes a REAL commit in the target project, parsed from the prompt.
+project="$(printf '%s\n' "$prompt" | sed -n 's/^\*\*Working directory:\*\* //p' | head -1)"
+do_fix_commit() {
+  ( cd "$project" \
+    && echo "fixed by $name" >> src/app.txt \
+    && git add src/app.txt \
+    && git commit -q -m "fix: correct app output
+
+Closes #7" )
+}
+
+case "$scenario:$stage" in
+  happy:verify|reject:verify|check:verify)
+    echo "Reproduced the problem. The issue is real."
+    echo "DONE-PROCEED" ;;
+  happy:fix|reject:fix|check:fix)
+    do_fix_commit
+    echo "DONE-FIX-APPLIED" ;;
+  happy:review)
+    echo "Diff is correct, minimal, in scope."
+    echo "DONE-APPROVED" ;;
+  reject:review)
+    echo "DONE-REJECTED: the fix lacks a regression test" ;;
+  falsepos:verify)
+    echo "DONE-FALSE-POSITIVE: the code already behaves correctly" ;;
+  fpdirty:verify)
+    ( cd "$project" && echo "scratch" > junk.txt \
+      && echo "more" >> src/app.txt \
+      && git add junk.txt && git commit -q -m "rogue verify commit" )
+    echo "DONE-FALSE-POSITIVE: stale finding" ;;
+  crash:verify)
+    echo "transport error: connection reset"
+    exit 1 ;;
+  agytimeout:verify)
+    echo "Error: timed out waiting for response"
+    exit 0 ;;
+  verifydirty:verify)
+    ( cd "$project" && echo "scratch" > junk.txt )
+    echo "DONE-PROCEED" ;;
+  verifydirty:fix)
+    if [ -f "$project/junk.txt" ]; then
+      echo "DONE-BLOCKED: verify residue leaked into the fix worktree"
+    else
+      do_fix_commit
+      echo "DONE-FIX-APPLIED"
+    fi ;;
+  verifydirty:review)
+    echo "DONE-APPROVED" ;;
+  verifycommit:verify)
+    ( cd "$project" && echo "scratch" > junk.txt && git add junk.txt \
+      && git commit -q -m "rogue verify commit" )
+    echo "DONE-PROCEED" ;;
+  verifycommit:fix)
+    do_fix_commit
+    echo "DONE-FIX-APPLIED" ;;
+  verifycommit:review)
+    echo "DONE-APPROVED" ;;
+  reviewcommit:verify)
+    echo "DONE-PROCEED" ;;
+  reviewcommit:fix)
+    do_fix_commit
+    echo "DONE-FIX-APPLIED" ;;
+  reviewcommit:review)
+    ( cd "$project" && echo "rogue" >> src/app.txt && git add src/app.txt \
+      && git commit -q -m "rogue reviewer commit" )
+    echo "DONE-APPROVED" ;;
+  reviewdirty:verify)
+    echo "DONE-PROCEED" ;;
+  reviewdirty:fix)
+    do_fix_commit
+    echo "DONE-FIX-APPLIED" ;;
+  reviewdirty:review)
+    ( cd "$project" && echo "reviewer scratch" >> src/app.txt )
+    echo "DONE-REJECTED: needs work" ;;
+  *)
+    echo "DONE-BLOCKED: unexpected scenario '$scenario' at stage '$stage'"
+    exit 0 ;;
+esac

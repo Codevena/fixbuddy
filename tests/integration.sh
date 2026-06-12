@@ -260,6 +260,17 @@ test_notify_reports_blocked() {
   assert_substr "$TMP/notify-env.txt" "FIXBUDDY_ABORTED=false"
 }
 
+test_notify_reports_aborted_batch() {
+  # With --crash-abort 1 a single crash aborts the batch; the notification
+  # must still fire and carry FIXBUDDY_ABORTED=true.
+  SCENARIO=crash; make_fixture
+  run_fixbuddy --auto-merge --crash-abort 1 \
+    --notify-cmd 'env | grep ^FIXBUDDY_ > notify-env.txt; cat > notify-stdin.txt'
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_substr "$TMP/notify-env.txt" "FIXBUDDY_ABORTED=true"
+  assert_substr "$TMP/notify-stdin.txt" "ABORTED"
+}
+
 test_notify_cmd_from_config() {
   # notify_cmd is an additive config key, read from the launch dir like the
   # other config keys.
@@ -287,8 +298,8 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_verify_residue_cleaned_on_early_return
        test_reviewer_commit_is_discarded test_reviewer_residue_cleaned_before_retry
        test_notify_cmd_receives_summary test_notify_failure_does_not_break_run
-       test_notify_reports_blocked test_notify_cmd_from_config
-       test_notify_skipped_on_dry_run)
+       test_notify_reports_blocked test_notify_reports_aborted_batch
+       test_notify_cmd_from_config test_notify_skipped_on_dry_run)
 
 for t in "${TESTS[@]}"; do
   CURRENT="$t"

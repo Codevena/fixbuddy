@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Deterministic demo double for the GitHub CLI, used only when recording docs/demo.gif.
+# Returns canned responses so fixbuddy's pipeline runs end-to-end offline. NOT real.
+# Everything else (git branch/commit/diff/push to a local bare repo) is genuine.
+case "$1 $2" in
+  "repo view")  echo "main" ;;
+  "issue list")
+    case "$*" in
+      *fix:pr-open*) echo "[]" ;;   # the "unstick" scan finds nothing
+      *) echo '[{"number":7,"title":"add() returns the wrong result","labels":[{"name":"bug"},{"name":"severity:medium"}],"url":"https://github.com/acme/calc/issues/7","body":"add(2, 3) should return 5 but returns -1. The operator looks wrong."}]' ;;
+    esac ;;
+  "pr create")  echo "https://github.com/acme/calc/pull/12" ;;
+  "pr view")    echo "true" ;;     # PR reported as merged -> clean "merged" ending
+  "pr list")    echo "" ;;
+  *) : ;;   # label create/list, issue edit/comment, pr merge, auth setup-git -> no-op OK
+esac
+exit 0

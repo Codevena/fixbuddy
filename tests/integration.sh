@@ -79,9 +79,58 @@ test_happy_path() {
     || fail "local fix branch not cleaned up"
 }
 
+test_false_positive() {
+  SCENARIO=falsepos; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:false-positive'
+  assert_grep "$MUTLOG" '^issue close 7'
+  assert_no_grep "$STAGELOG" ':fix$'
+}
+
+test_review_reject() {
+  SCENARIO=reject; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:rejected'
+  [ "$(grep -c '^claude:fix$' "$STAGELOG")" -eq 2 ]   || fail "expected 2 fix attempts"
+  [ "$(grep -c '^codex:review$' "$STAGELOG")" -eq 2 ] || fail "expected 2 review attempts"
+  assert_no_grep "$MUTLOG" '^pr create'
+  [ -z "$(git -C "$TMP/project" branch --list 'fix/issue-7')" ] \
+    || fail "local fix branch not cleaned up"
+}
+
+test_check_gate() {
+  SCENARIO=check; make_fixture
+  run_fixbuddy --check-cmd 'false'
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:rejected'
+  assert_no_grep "$STAGELOG" ':review$'
+  assert_no_grep "$MUTLOG" '^pr create'
+}
+
+test_dry_run_read_only() {
+  SCENARIO=happy; make_fixture
+  run_fixbuddy --dry-run
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  [ ! -s "$MUTLOG" ]   || fail "dry-run made mutations: $(tr '\n' ';' < "$MUTLOG")"
+  [ ! -s "$STAGELOG" ] || fail "dry-run invoked an agent"
+  assert_grep "$RUNLOG" '#7'
+}
+
+test_crash_labels_blocked() {
+  SCENARIO=crash; make_fixture
+  run_fixbuddy --auto-merge
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:blocked'
+  # the label-create bootstrap lists every label; only issue edits matter here
+  assert_no_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
+}
+
 # ---------------- Runner ----------------
 
-TESTS=(test_happy_path)
+TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
+       test_dry_run_read_only test_crash_labels_blocked)
 
 for t in "${TESTS[@]}"; do
   CURRENT="$t"

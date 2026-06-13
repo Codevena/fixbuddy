@@ -1,15 +1,14 @@
 # Next session
 
-**v0.7.0 is released** (2026-06-12): `--notify-cmd` run-summary notification
-hook (additive config key `notify_cmd`). PR #10, merged to `main`. Earlier the
-same day, v0.6.0 shipped the agy migration (Gemini CLI successor) and the
-read-only-stage guards.
+**v0.7.1 is on branch `feat/action-notify-cmd-v0.7.1`** (2026-06-13), awaiting
+merge/tag: the GitHub Action gains a `notify-cmd` input (newline-separated —
+shell commands may contain commas). Released earlier: v0.7.0 (`--notify-cmd`
+hook, 2026-06-12) and v0.6.0 (agy migration + read-only-stage guards).
 
 ## Status snapshot
 
-- `main` is at the v0.7.0 merge; tags `v0.7.0` and floating `v1` point at it.
-  GitHub release published; CI green; install one-liner smoke-tested against
-  the fresh tag (checksums OK, `--version` → 0.7.0, `--help` shows notify-cmd).
+- DoD gate passed (Codex PASS + Claude PASS); 20/20 integration tests; the
+  action-smoke workflow exercises the new input on the PR.
 - Specs/plans: `docs/superpowers/specs/` + `docs/superpowers/plans/`
   (2026-06-12 agy + notify-cmd documents).
 - Tests: `tests/integration.sh` — 20 offline scenarios, runs in CI.

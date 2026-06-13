@@ -46,6 +46,10 @@ inputs:
     description: "List target issues only, make no changes"
     required: false
     default: "false"
+  notify-cmd:
+    description: "Run-summary notification command(s), ONE PER LINE (use a YAML block scalar). Each non-empty line becomes a repeated --notify-cmd flag. Newline-separated on purpose: shell commands may contain commas. Not fired in dry-run."
+    required: false
+    default: ""
   github-token:
     description: "Token with contents:write, pull-requests:write, issues:write"
     required: false
@@ -71,6 +75,7 @@ runs:
         FIXBUDDY_BASE: ${{ inputs.base-branch }}
         FIXBUDDY_AUTO_MERGE: ${{ inputs.auto-merge }}
         FIXBUDDY_DRY_RUN: ${{ inputs.dry-run }}
+        FIXBUDDY_NOTIFY_CMD: ${{ inputs.notify-cmd }}
         FIXBUDDY_ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
@@ -107,6 +112,17 @@ runs:
             _l="${_l%"${_l##*[![:space:]]}"}"
             if [ -n "$_l" ]; then cmd+=(--label "$_l"); fi
           done
+        fi
+
+        # NEWLINE-separated notify commands become repeated --notify-cmd flags.
+        # Newlines instead of commas on purpose: shell commands may legitimately
+        # contain commas, and a YAML block scalar makes one-per-line natural.
+        if [ -n "$FIXBUDDY_NOTIFY_CMD" ]; then
+          while IFS= read -r _n; do
+            _n="${_n#"${_n%%[![:space:]]*}"}"
+            _n="${_n%"${_n##*[![:space:]]}"}"
+            if [ -n "$_n" ]; then cmd+=(--notify-cmd "$_n"); fi
+          done <<< "$FIXBUDDY_NOTIFY_CMD"
         fi
 
         "${cmd[@]}"

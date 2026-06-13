@@ -28,7 +28,6 @@ read-only-stage guards.
 
 ## Idea backlog (not committed)
 
-- `notify-cmd` input for the GitHub Action wrapper
 - Log retention/pruning for `~/.fixbuddy/runs`
 - New agents as they appear (validation list + run_agent case + wizard + docs)
 - The `--help` sed range (`2,51p`) must be adjusted whenever header lines are

@@ -57,15 +57,15 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 Install with the one-liner (macOS and Linux, including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.1/install.sh | bash
 ```
 
-This downloads the pinned `v0.7.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+This downloads the pinned `v0.7.1` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
 
 **Prefer to read before you run?** The installer is short — inspect it first, then run it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.1/install.sh -o install.sh
 less install.sh        # read it
 bash install.sh        # then run it
 ```
@@ -381,6 +381,7 @@ The action copies each run's logs into `fixbuddy-logs/` in the workspace. Add an
 | `base-branch` | `--base` | auto-detect |
 | `auto-merge` | `--no-auto-merge` when `false`; `--auto-merge` when `true` | `true` |
 | `dry-run` | `--dry-run` when `true` — lists targets, makes no changes | `false` |
+| `notify-cmd` | `--notify-cmd` (one command **per line** — newline-separated because shell commands may contain commas; use a YAML block scalar for multiple) | none |
 | `github-token` | `GH_TOKEN` for `gh` | `${{ github.token }}` |
 
 Running fixbuddy in CI gives AI agents repository write access through whatever token you hand them. Read [SECURITY.md](SECURITY.md) before enabling this on a repository that matters.

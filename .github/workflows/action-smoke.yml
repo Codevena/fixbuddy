@@ -26,6 +26,10 @@ jobs:
         with:
           dry-run: "true"
           max: "1"
+          # Exercises the notify-cmd input wiring (argument construction and
+          # fixbuddy's flag parsing). Dry-run never FIRES notifications, so
+          # this cannot have side effects.
+          notify-cmd: "echo smoke-notify"
         # No agent CLI is installed here on purpose: --dry-run only lists target
         # issues and never invokes an agent, so this exercises the wrapper's input
         # parsing, command construction, and exit codes without real API keys.

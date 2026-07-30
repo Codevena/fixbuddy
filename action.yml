@@ -1,5 +1,5 @@
 name: fixbuddy two-agent issue fixer
-description: Turn GitHub issues into reviewed PRs using two AI coding agents
+description: "Turn GitHub issues into reviewed pull requests: one AI agent fixes, a second reviews (claude, codex, opencode, agy)."
 author: Codevena
 branding:
   icon: git-pull-request

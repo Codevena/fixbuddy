@@ -17,6 +17,13 @@ read-only-stage guards), both 2026-06-12.
 - Tests: `tests/integration.sh` — 20 offline scenarios, runs in CI.
 - The README roadmap is intentionally empty: notifications shipped, resume
   mode is covered by the label system (see README FAQ).
+- **Unreleased on `main` (2026-07-30):** `action.yml` description rewritten for
+  Marketplace search ("pull requests" spelled out, agents named). It only
+  reaches the listing with the next release — fold it into that CHANGELOG
+  entry; do NOT cut a release just for it. Measured: Marketplace search does
+  index the description, but ranking buries listings with 0 stars (`coding`
+  → 79 results, fixbuddy on page 4), so the payoff is limited to rare terms
+  (`agy` 0 competitors, `opencode` 6). Distribution has to come from outside.
 
 ## Release checklist (per release)
 

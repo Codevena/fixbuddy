@@ -2,7 +2,7 @@
 
 ## Unreleased single-file candidate — 2026-09-27
 
-The current worktree contains a one-file `fixbuddy` command assembled from
+Local product commit `93b7b3a` contains a one-file `fixbuddy` command assembled from
 `src/core.sh`, `src/tui.py` and `src/wizard.sh` by `scripts/build.py`. Running
 it interactively opens an account-wide GitHub repository and open-issue view;
 `--wizard` and direct CLI flags retain the existing pipeline. The demo has
@@ -11,11 +11,16 @@ published v0.8.0 installation path remains available. The Action points at
 the bundled command. A run now checks the selected repository against both
 origin fetch and push destinations before any writes.
 
-This section describes the working candidate, not a published release. Run
-`python3 scripts/build.py` after source changes, then regenerate `SHA256SUMS`
-for `fixbuddy`. Verify tests and review before a local commit. Do not push or
-publish this candidate without an explicit current-task instruction. The
-untracked `review-todo.md` belongs to Markus and is outside the product commit.
+This is a verified local candidate, not a published release. The final bundle
+passed 48/48 offline integration and 17/17 UI tests, ShellCheck, Actionlint,
+bundle and SHA256 checks; independent delta review found 0 CRITICAL/WARN. A
+read-only account inventory returned 114 repositories, 25 open issues and 0
+unknown. `bash install.sh --local` installed the candidate at
+`~/.local/bin/fixbuddy` and its checksum matched. `pd` still reports 0 open
+audit findings but an unknown review date/commit. Do not push or publish
+without an explicit current-task instruction; after publication verify CI and
+the public installer. No real agent write/PR smoke was performed. The untracked
+`review-todo.md` belongs to Markus and remains outside the product commit.
 
 ## Published v0.8.0 — 2026-09-27
 

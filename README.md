@@ -22,7 +22,7 @@ The goal is controlled automation: one issue per branch, one issue per PR, expli
 
 Most AI issue-fixers let a single agent write a fix and, at best, review its own work. fixbuddy splits the job across **two different agents from two different vendors**: by default `claude` writes the fix and `codex` reviews the committed diff with a fresh context. The fixer never approves its own work.
 
-It needs no cloud service, no Docker, and no separate API-key broker — it drives the AI coding CLIs you already have installed (`claude`, `codex`, `opencode`, `agy`), so it runs on the subscriptions you already pay for. The orchestrator is ~1,200 lines of readable Bash.
+It needs no cloud service, no Docker, and no separate API-key broker — it drives the AI coding CLIs you already have installed (`claude`, `codex`, `opencode`, `agy`), so it runs on the subscriptions you already pay for. The orchestrator is readable Bash; the optional terminal UI uses Python 3's standard library.
 
 |  | fixbuddy | Copilot coding agent | claude-code-action | OpenHands resolver |
 |---|---|---|---|---|
@@ -32,7 +32,7 @@ It needs no cloud service, no Docker, and no separate API-key broker — it driv
 | Infra required | bash · git · gh · jq | none (hosted) | GitHub Actions | Docker + API keys |
 | Cost | your existing CLI subscriptions | paid Copilot (premium requests) | API / subscription | your API + compute |
 | Sandbox isolation | no — runs on the host ([documented](#safety-model)) | yes (Actions runner) | yes (Actions runner) | yes (Docker) |
-| Footprint | ~1,200 lines of Bash you can read | hosted SaaS | action + runtime | full framework |
+| Footprint | Bash core + optional Python terminal UI | hosted SaaS | action + runtime | full framework |
 
 **When _not_ to reach for fixbuddy:** if you need a managed sandbox or compliance guarantees, want a one-click GitHub-native experience, or run against issues from untrusted contributors — use one of the tools above. fixbuddy deliberately trades isolation for a small, transparent, local-first tool (see [Safety Model](#safety-model)). It fits a solo developer or small team batch-fixing well-scoped issues in their **own** repositories.
 
@@ -57,26 +57,53 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 Install with the one-liner (macOS and Linux, including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash
 ```
 
-This downloads the pinned `v0.7.1` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+This downloads the pinned `v0.8.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
 
 **Prefer to read before you run?** The installer is short — inspect it first, then run it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.1/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh -o install.sh
 less install.sh        # read it
 bash install.sh        # then run it
 ```
 
-The installer verifies each downloaded script against the pinned `SHA256SUMS` (download integrity — see [Safety Model](#safety-model)).
+The installer checks downloaded scripts against `SHA256SUMS` when available
+(download integrity — see [Safety Model](#safety-model)). `--with-tui` requires
+the checksum file and a checksum for the UI.
 
 Then run:
 
 ```bash
 fixbuddy-wizard.sh
 ```
+
+To install the terminal UI as well, use Python 3 and pass `--with-tui`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash -s -- --with-tui
+fixbuddy-tui.py --demo
+```
+
+The UI also runs directly from a source checkout and needs no extra Python
+packages:
+
+```bash
+./fixbuddy-tui.py --demo
+./fixbuddy-tui.py --repo owner/repo --project ~/code/repo
+```
+
+The demo is read-only. In a real session, **QUEUE** previews actionable issues,
+Space selects specific issues, **SETUP** edits run options, and `g` asks for
+confirmation before starting the Bash pipeline. **RUN** shows progress; `x`
+requests a safe interrupt. Press `?` for shortcuts. The UI starts with
+auto-merge off even if an existing config file enables it; enable it explicitly
+in SETUP for that run.
+
+The base installation stays Bash-only. `--with-tui` adds the checked Python
+program from the same pinned v0.8.0 release.
 
 ### Developer install
 
@@ -113,6 +140,7 @@ Start with `--dry-run` or `--max 1` on a new repository.
 - At least one supported agent CLI
 
 Both `--fix-agent` and `--review-agent` must be installed. They may point to the same CLI, but using different agents gives a more independent review.
+The optional terminal UI additionally needs Python 3 and an interactive terminal.
 
 ## Supported Agents
 
@@ -147,6 +175,7 @@ These agent invocations are intentionally powerful. Run fixbuddy only against re
 | `--no-auto-merge` | Open PRs without requesting auto-merge | off |
 | `--skip-label <label>` | Skip issues with this label | `fix:applied` |
 | `--dry-run` | List issues that would be processed, with the planned config, without making any changes (no labels created, no issues edited) | off |
+| `--json` | With `--dry-run`, output the effective queue and settings as JSON for the terminal UI or scripts | off |
 | `-y`, `--yes` | Skip confirmation | off |
 
 ## Configuration file
@@ -218,9 +247,17 @@ fixbuddy creates and manages these labels:
 
 - fixbuddy refuses to start if the target checkout has a dirty working tree.
 - Each issue gets a fresh `fix/issue-N` branch.
+- A failed fetch or base update blocks that issue. A closed PR's stale remote
+  branch is replaced only with a lease pinned to its observed SHA; an open PR
+  prevents replacement.
 - The verify stage is read-only by contract, but no agent CLI enforces that: files it writes are stashed and commits it creates on the base branch are discarded before the fix branch is created.
 - The fix agent is instructed to stage only relevant files and to avoid generated artifacts.
 - The review agent receives the committed diff and must reject unrelated changes.
+- Branch and base refs are checked after agent calls; unexpected changes block
+  the issue before a push. Reviewer approval must be one exact final marker.
+- The push source is the reviewed commit SHA, followed by a remote-tip check
+  before PR creation. A PR API failure leaves the pushed branch available for
+  recovery.
 - If the reviewer creates commits, the branch is reset to the reviewed commit — only the reviewed commit is ever pushed.
 - Push happens only after review approval.
 - `fix:applied` is added only after GitHub reports that the PR is merged.
@@ -251,6 +288,8 @@ Preview targets (no writes at all — no labels created, no issues edited):
 ./fixbuddy.sh --repo owner/repo --project ~/code/repo --severity high --dry-run
 ```
 
+Add `--json` to that command for a machine-readable preview.
+
 Fix specific issues only:
 
 ```bash
@@ -265,12 +304,19 @@ Add a test gate so fixes are never reviewed unless all checks pass:
   --fix-agent claude --review-agent codex
 ```
 
-Open PRs but do not request auto-merge:
+Open PRs for human merge (the default):
 
 ```bash
 ./fixbuddy.sh --repo owner/repo --project ~/code/repo \
   --fix-agent claude --review-agent codex \
   --no-auto-merge --max 5
+```
+
+Request auto-merge only when you want GitHub to merge an approved PR after its
+required checks pass:
+
+```bash
+./fixbuddy.sh --repo owner/repo --project ~/code/repo --auto-merge --max 1
 ```
 
 Use one agent for both roles:
@@ -324,7 +370,8 @@ jobs:
           npm install -g @anthropic-ai/claude-code
           npm install -g @openai/codex
 
-      - uses: Codevena/fixbuddy@v1
+      - id: fixbuddy
+        uses: Codevena/fixbuddy@v1
         with:
           severity: high
           max: "5"
@@ -336,7 +383,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fixbuddy-logs
-          path: fixbuddy-logs/
+          path: ${{ steps.fixbuddy.outputs.logs-path }}
           if-no-files-found: ignore
 ```
 
@@ -365,7 +412,9 @@ A `dry-run: "true"` input lists target issues (with the planned config) without 
 
 ### Logs
 
-The action copies each run's logs into `fixbuddy-logs/` in the workspace. Add an `actions/upload-artifact` step (see the snippet) to keep them after the runner is torn down.
+The action copies only its own run directory into `fixbuddy-logs/<run-id>/`
+and exposes that exact path as `logs-path`. Point `actions/upload-artifact` at
+this output, as shown above. A dry run has no run-log path.
 
 ### Inputs
 
@@ -379,7 +428,7 @@ The action copies each run's logs into `fixbuddy-logs/` in the workspace. Add an
 | `label` | `--label` (comma-separated, becomes repeated flags) | none |
 | `max` | `--max` | `5` |
 | `base-branch` | `--base` | auto-detect |
-| `auto-merge` | `--no-auto-merge` when `false`; `--auto-merge` when `true` | `true` |
+| `auto-merge` | `--no-auto-merge` when `false`; `--auto-merge` when `true` | `false` |
 | `dry-run` | `--dry-run` when `true` — lists targets, makes no changes | `false` |
 | `notify-cmd` | `--notify-cmd` (one command **per line** — newline-separated because shell commands may contain commas; use a YAML block scalar for multiple) | none |
 | `github-token` | `GH_TOKEN` for `gh` | `${{ github.token }}` |
@@ -389,7 +438,10 @@ Running fixbuddy in CI gives AI agents repository write access through whatever 
 ## FAQ
 
 **Does fixbuddy touch the base branch directly?**
-No. It works on `fix/issue-N` branches and opens PRs against the base branch.
+It fast-forwards the local base branch to the fetched remote base before making
+an issue branch. FixBuddy itself does not commit or push the base branch. Agent
+CLIs have full workspace access, so FixBuddy restores or blocks unexpected
+agent changes to that branch before any PR push.
 
 **What happens when auto-merge is requested but checks are still running?**
 The PR remains open with `fix:pr-open`. GitHub will merge it later if branch protection and checks allow it.

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Test-only git wrapper: move the issue branch immediately before git resolves
+# its push source. A name-based push sends the rogue commit; a SHA refspec does not.
+set -u
+if [ "${FIXBUDDY_TEST_SCENARIO:-}" = "pushrace" ] && [ "${1:-}" = "push" ] \
+   && [[ " $* " == *" origin "* ]] && [[ " $* " == *"fix/issue-7"* ]] \
+   && [ ! -f "$FIXBUDDY_TEST_PROJECT/rogue-push-marker" ]; then
+  (
+    cd "$FIXBUDDY_TEST_PROJECT" || exit 1
+    printf 'race\n' > rogue-push-marker
+    printf 'rogue late commit\n' >> src/app.txt
+    "$FIXBUDDY_TEST_REAL_GIT" add src/app.txt
+    "$FIXBUDDY_TEST_REAL_GIT" commit -q -m "unreviewed late commit"
+  ) || exit 1
+fi
+exec "$FIXBUDDY_TEST_REAL_GIT" "$@"

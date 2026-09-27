@@ -1,5 +1,45 @@
 # Next session
 
+## Current local state — 2026-09-27 (`0765617`, not pushed)
+
+The seven logic findings in the 2026-08-30 `review-todo.md` are addressed in
+local commit `0765617`. The Bash pipeline checks branch/base state, fetches the
+base before verification, uses an exact final review verdict, pages through all
+issues, replaces stale remote branches only under a lease, pushes the reviewed
+SHA, and retains the remote branch if PR creation fails. Auto-merge defaults to
+off. The Action copies only its own run logs. An optional Python 3 terminal UI
+provides queue, setup, issue detail, run activity, and a read-only demo.
+
+Final local evidence on the candidate: 43/43 offline integration scenarios,
+10/10 TUI tests including narrow/wide PTY renders, Bash syntax, ShellCheck,
+Action workflow/YAML parsing, and three SHA256 checks passed. Independent plan
+review and post-implementation delta review ended with no open CRITICAL/WARN.
+The local commit was additionally scanned with redacted Gitleaks (no findings);
+this repo's configured hooks directory had no pre-commit hook.
+
+`pd zeig --kurz --repo .` reports `Audit: ● 0 offene Befunde`. The local
+`review-todo.md` carries `erledigt 0765617` for all seven rows and remains
+untracked, intentionally outside the product commit. No live GitHub write,
+agent-provider run, push, tag, release, install, or deployment was performed.
+The pinned v0.7.1 installer still installs its two existing scripts; the UI is
+available from the source checkout and through the updated installer's
+`--with-tui` option once this code exists at the chosen published ref.
+
+**Next executable step:** review the local commit and `review-todo.md`, then
+decide whether to publish the candidate. Pushing or releasing requires an
+explicit instruction; after publication, verify CI and the installer against
+the published ref. The older snapshot below describes the prior v0.7.1 state.
+
+### Follow-up 2026-09-27 — full Fix Buddy wordmark
+
+The TUI header now spells out `FIX BUDDY`. Commit `380c30d` adds a five-row
+violet-to-pink block wordmark at normal widths and a compact mark on narrow
+terminals. The 10 TUI tests (including 40- and 120-column PTYs), the focused
+TUI installer smoke, SHA256 checks, and staged Gitleaks scan passed. Local
+`main` remains ahead of `origin/main`; there has still been no push,
+release, or installation. The untracked `review-todo.md` remains untouched by
+this visual follow-up.
+
 **v0.7.1 is released** (2026-06-13): the GitHub Action gains a `notify-cmd`
 input (newline-separated — shell commands may contain commas). PR #11.
 Released earlier: v0.7.0 (`--notify-cmd` hook) and v0.6.0 (agy migration +
@@ -29,7 +69,7 @@ read-only-stage guards), both 2026-06-12.
 
 1. Bump `VERSION` in `fixbuddy.sh` (+ header), wizard header/banner,
    `install.sh` `DEFAULT_REF`, README one-liners; update `CHANGELOG.md`.
-2. Regenerate `SHA256SUMS` (`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh >
+2. Regenerate `SHA256SUMS` (`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py >
    SHA256SUMS`) — `install.sh` verifies fail-closed.
 3. Merge via PR; then `git tag vX.Y.Z && git push origin vX.Y.Z` and
    `git tag -f v1 vX.Y.Z && git push origin v1 --force`.

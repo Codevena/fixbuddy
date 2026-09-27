@@ -11,6 +11,7 @@ Required tools:
 - `jq`
 - `gh`
 - `shellcheck` for static analysis
+- Python 3 for the optional terminal UI and its tests
 
 Agent CLIs are needed only for end-to-end manual testing.
 
@@ -21,8 +22,12 @@ Run these before opening a pull request:
 ```bash
 bash -n fixbuddy.sh
 bash -n fixbuddy-wizard.sh
-shellcheck fixbuddy.sh fixbuddy-wizard.sh tests/integration.sh tests/stubs/agent tests/stubs/gh
+bash -n install.sh
+bash -n action-collect-logs.sh
+shellcheck fixbuddy.sh fixbuddy-wizard.sh install.sh action-collect-logs.sh tests/integration.sh tests/stubs/agent tests/stubs/gh tests/stubs/curl tests/stubs/git-push-race
 tests/integration.sh
+python3 -m py_compile fixbuddy-tui.py
+python3 -m unittest discover -s tests -p 'test_tui.py'
 ```
 
 `tests/integration.sh` runs the full pipeline offline against stubbed `gh`/agent

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy-wizard.sh v0.7.1 — beginner-friendly launcher for fixbuddy.sh
+# fixbuddy-wizard.sh v0.8.0 — beginner-friendly launcher for fixbuddy.sh
 #
 # Walks a user through the required flags via interactive prompts, validates
 # prerequisites, shows a preview of the exact command, and then exec's fixbuddy.sh.
@@ -32,7 +32,7 @@ printf "%s" "${MAG}${BOLD}"
 cat <<'EOF'
 
   ╔═══════════════════════════════════════════════════╗
-  ║              fixbuddy wizard v0.7.1                ║
+  ║               fixbuddy wizard v0.8.0              ║
   ║   Turn GitHub issues into reviewed PRs             ║
   ╚═══════════════════════════════════════════════════╝
 EOF
@@ -151,8 +151,8 @@ fi
 step "5." "How aggressive should fixbuddy be?"
 cat <<EOF
   [1] preview      (dry-run only — lists targets, makes no changes)
-  [2] careful      (creates PRs, you decide when to merge)
-  [3] autonomous   (auto-merges PRs that pass CI — recommended)
+  [2] careful      (creates PRs, you decide when to merge — recommended)
+  [3] autonomous   (requests auto-merge for approved PRs)
 EOF
 ask "Choice [1-3]:"
 read -r mode_choice
@@ -160,7 +160,7 @@ MODE_FLAGS=()
 case "$mode_choice" in
   1) MODE_FLAGS=(--dry-run);       MODE_LABEL="preview" ;;
   2) MODE_FLAGS=(--no-auto-merge); MODE_LABEL="careful" ;;
-  3) MODE_FLAGS=();                MODE_LABEL="autonomous" ;;
+  3) MODE_FLAGS=(--auto-merge);    MODE_LABEL="autonomous" ;;
   *) fail "invalid choice"; exit 1 ;;
 esac
 ok "mode: $MODE_LABEL"

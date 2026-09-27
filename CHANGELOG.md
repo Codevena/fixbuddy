@@ -4,6 +4,36 @@ All notable changes to fixbuddy are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-09-27
+
+### Added
+- Optional Python 3 terminal UI with a read-only queue, run setup, issue
+  selection, confirmation, live activity and a visual demo. The source checkout
+  can run it directly; the updated installer accepts `--with-tui` for refs that
+  contain the UI and its checksum.
+- `--dry-run --json` exposes the same actionable queue to the UI and scripts.
+- Paginated issue reads remove the 200-issue ceiling for both the queue and
+  closed-PR reconciliation.
+- The composite action exposes `logs-path` and copies only its own run logs.
+
+### Fixed
+- Agent branch switches and unexpected base changes are detected and blocked
+  before review or push. Verify-time ref changes also block after recovery;
+  fetch and base-update failures block the issue before verification.
+- Closed PRs with a stale `fix/issue-N` remote branch can be retried using a
+  lease pinned to the observed remote SHA; open PRs are left alone.
+- Review approval requires one exact final marker. Ambiguous or prefixed
+  markers and nonzero reviewer exits cannot authorize a push. Push uses the
+  reviewed SHA, then checks the remote tip before PR creation.
+- A failed PR creation retains the pushed branch for recovery instead of
+  deleting a replaced stale branch. The terminal UI invalidates old issue
+  selections when setup or preview state changes.
+- One-second agent timeouts no longer wait for a ten-second polling interval;
+  a separate watchdog marker survives concurrent agent output.
+- `--help` prints the complete header even as options are added.
+- Auto-merge is off by default in the CLI and Action. The wizard's autonomous
+  choice passes `--auto-merge` explicitly.
+
 ## [0.7.1] - 2026-06-13
 
 ### Added
@@ -105,6 +135,7 @@ to existing flags.
 
 Predate this changelog. See the git history and the `v0.4.0` / `v0.3.2` tags.
 
+[0.8.0]: https://github.com/Codevena/fixbuddy/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/Codevena/fixbuddy/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Codevena/fixbuddy/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Codevena/fixbuddy/compare/v0.5.0...v0.6.0

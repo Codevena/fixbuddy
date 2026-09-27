@@ -41,7 +41,7 @@ inputs:
   auto-merge:
     description: "Request auto-merge after review approval"
     required: false
-    default: "true"
+    default: "false"
   dry-run:
     description: "List target issues only, make no changes"
     required: false
@@ -55,10 +55,16 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+outputs:
+  logs-path:
+    description: "Logs from this invocation only (empty for dry runs)"
+    value: ${{ steps.collect-logs.outputs.logs_path }}
+
 runs:
   using: composite
   steps:
     - name: Run fixbuddy
+      id: run-fixbuddy
       shell: bash
       # Inputs are passed through env vars rather than interpolated directly into the
       # script body — this keeps untrusted input out of the shell parser (no script
@@ -100,7 +106,7 @@ runs:
 
         if [ -n "$FIXBUDDY_SEVERITY" ]; then cmd+=(--severity "$FIXBUDDY_SEVERITY"); fi
         if [ -n "$FIXBUDDY_BASE" ]; then cmd+=(--base "$FIXBUDDY_BASE"); fi
-        if [ "$FIXBUDDY_AUTO_MERGE" = "false" ]; then cmd+=(--no-auto-merge); else cmd+=(--auto-merge); fi
+        if [ "$FIXBUDDY_AUTO_MERGE" = "true" ]; then cmd+=(--auto-merge); else cmd+=(--no-auto-merge); fi
         if [ "$FIXBUDDY_DRY_RUN" = "true" ]; then cmd+=(--dry-run); fi
 
         # Comma-separated labels become repeated --label flags. Each entry is
@@ -125,20 +131,17 @@ runs:
           done <<< "$FIXBUDDY_NOTIFY_CMD"
         fi
 
-        "${cmd[@]}"
+        log_pointer="$(mktemp "${RUNNER_TEMP:-/tmp}/fixbuddy-log-pointer.XXXXXX")"
+        printf 'log_pointer=%s\n' "$log_pointer" >> "$GITHUB_OUTPUT"
+        FIXBUDDY_LOG_DIR_FILE="$log_pointer" "${cmd[@]}"
 
     - name: Collect logs
+      id: collect-logs
       if: always()
       shell: bash
-      # fixbuddy writes per-run logs under ~/.fixbuddy/runs, which vanish when the runner
-      # is torn down. Copy them into the workspace so the consumer's workflow can pick
-      # them up with actions/upload-artifact if it wants to.
       env:
         FIXBUDDY_WORKSPACE: ${{ github.workspace }}
+        FIXBUDDY_LOG_POINTER: ${{ steps.run-fixbuddy.outputs.log_pointer }}
+        FIXBUDDY_ACTION_PATH: ${{ github.action_path }}
       run: |
-        set -euo pipefail
-        if [ -d "$HOME/.fixbuddy/runs" ]; then
-          mkdir -p "$FIXBUDDY_WORKSPACE/fixbuddy-logs"
-          cp -R "$HOME/.fixbuddy/runs/." "$FIXBUDDY_WORKSPACE/fixbuddy-logs/" 2>/dev/null || true
-          echo "fixbuddy logs copied to fixbuddy-logs/ — add an actions/upload-artifact step to keep them."
-        fi
+        "$FIXBUDDY_ACTION_PATH/action-collect-logs.sh"

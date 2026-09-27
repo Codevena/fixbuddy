@@ -2,6 +2,13 @@
 # Test-only git wrapper: move the issue branch immediately before git resolves
 # its push source. A name-based push sends the rogue commit; a SHA refspec does not.
 set -u
+if [ "${1:-}" = remote ] && [ "${2:-}" = get-url ]; then
+  case " $* " in
+    *" --push "*) printf '%s\n' 'git@github.com:acme/app.git' ;;
+    *) printf '%s\n' 'https://github.com/acme/app.git' ;;
+  esac
+  exit 0
+fi
 if [ "${FIXBUDDY_TEST_SCENARIO:-}" = "pushrace" ] && [ "${1:-}" = "push" ] \
    && [[ " $* " == *" origin "* ]] && [[ " $* " == *"fix/issue-7"* ]] \
    && [ ! -f "$FIXBUDDY_TEST_PROJECT/rogue-push-marker" ]; then

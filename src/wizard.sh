@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# fixbuddy-wizard.sh v0.8.0 — beginner-friendly launcher for fixbuddy.sh
+# fixbuddy wizard v0.9.0 — beginner-friendly launcher for fixbuddy
 #
 # Walks a user through the required flags via interactive prompts, validates
-# prerequisites, shows a preview of the exact command, and then exec's fixbuddy.sh.
+# prerequisites, shows a preview of the exact command, and then runs fixbuddy.
 
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FIXBUDDY="$SCRIPT_DIR/fixbuddy.sh"
+FIXBUDDY="${FIXBUDDY_SELF:-$SCRIPT_DIR/core.sh}"
 
 if [ ! -x "$FIXBUDDY" ]; then
-  echo "error: fixbuddy.sh not found or not executable at $FIXBUDDY" >&2
+  echo "error: fixbuddy not found or not executable at $FIXBUDDY" >&2
   exit 1
 fi
 
@@ -32,7 +32,7 @@ printf "%s" "${MAG}${BOLD}"
 cat <<'EOF'
 
   ╔═══════════════════════════════════════════════════╗
-  ║               fixbuddy wizard v0.8.0              ║
+  ║              fixbuddy wizard v0.9.0               ║
   ║   Turn GitHub issues into reviewed PRs             ║
   ╚═══════════════════════════════════════════════════╝
 EOF
@@ -326,7 +326,7 @@ case "$save_ans" in
         printf "  %s!%s Config is in launch dir, not project dir.\n" "$RED" "$RST"
         note "Run fixbuddy from $(pwd), or move .fixbuddy.conf into $PROJECT"
       fi
-      note "Next time you can just run: fixbuddy.sh"
+      note "Next time you can run the saved config with: fixbuddy run"
     fi
     ;;
   *)

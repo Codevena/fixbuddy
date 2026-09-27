@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy v0.8.0 — two-agent issue fixing with independent review
+# fixbuddy v0.9.0 — two-agent issue fixing with independent review
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -15,7 +15,9 @@
 #   - N consecutive crashes (default 3) abort the batch with a clear message
 #
 # Usage:
-#   ./fixbuddy.sh --repo <owner/repo> --project <path> [options]
+#   fixbuddy --repo <owner/repo> --project <path> [options]
+#   fixbuddy                 Open the terminal UI (wizard without Python 3)
+#   fixbuddy --wizard        Open the Bash setup wizard
 #
 # Options:
 #   --label <label>           Filter issues by label (repeatable)
@@ -52,7 +54,7 @@
 #   filter), and a config-provided label/check/notify cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.8.0"
+VERSION="0.9.0"
 
 # -------- Defaults --------
 REPO=""
@@ -181,7 +183,13 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=true; shift ;;
     --json) PREVIEW_JSON=true; shift ;;
     -y|--yes) AUTO_YES=true; shift ;;
-    -h|--help) awk 'NR == 1 { next } /^set -uo pipefail$/ { exit } { print }' "$0"; exit 0 ;;
+    -h|--help)
+      if [ -n "${FIXBUDDY_EMBEDDED_HELP:-}" ]; then
+        printf '%s\n' "$FIXBUDDY_EMBEDDED_HELP"
+      else
+        awk 'NR == 1 { next } /^set -uo pipefail$/ { exit } { print }' "$0"
+      fi
+      exit 0 ;;
     --version) echo "fixbuddy $VERSION"; exit 0 ;;
     *) err "Unknown arg: $1"; exit 2 ;;
   esac
@@ -280,6 +288,43 @@ if ! $DRY_RUN; then
     exit 2
   fi
 fi
+
+# --repo controls GitHub issue/PR writes while origin controls Git fetch/push.
+# They must identify the same repository before any agent or external write.
+# `get-url` expands Git URL rewrites; `--all` makes multiple destinations a
+# deterministic error instead of silently accepting the first one.
+github_remote_identity() {
+  local url="$1" path
+  case "$url" in
+    https://github.com/*) path="${url#https://github.com/}" ;;
+    git@github.com:*) path="${url#git@github.com:}" ;;
+    ssh://git@github.com/*) path="${url#ssh://git@github.com/}" ;;
+    *) return 1 ;;
+  esac
+  path="${path%/}"
+  path="${path%.git}"
+  [[ "$path" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+  printf '%s' "$path" | tr '[:upper:]' '[:lower:]'
+}
+
+if [[ ! "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  err "--repo must be an owner/name on github.com"
+  exit 2
+fi
+expected_repo=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
+require_origin_identity() {
+  local fetch_url push_url
+  fetch_url=$(cd "$PROJECT" && git remote get-url --all origin 2>/dev/null) || fetch_url=""
+  push_url=$(cd "$PROJECT" && git remote get-url --all --push origin 2>/dev/null) || push_url=""
+  if [ -z "$fetch_url" ] || [ -z "$push_url" ] \
+     || [[ "$fetch_url" == *$'\n'* ]] || [[ "$push_url" == *$'\n'* ]] \
+     || [ "$(github_remote_identity "$fetch_url")" != "$expected_repo" ] \
+     || [ "$(github_remote_identity "$push_url")" != "$expected_repo" ]; then
+    err "origin fetch/push destination does not match --repo $REPO; stopping before further writes"
+    exit 2
+  fi
+}
+require_origin_identity
 
 # Label creation and the fix:pr-open unstick scan both MUTATE the repo, so they are
 # skipped under --dry-run to keep a preview fully read-only. The issue fetch further
@@ -1108,6 +1153,7 @@ process_issue() {
   pre_verify_head=$(cd "$PROJECT" && git rev-parse HEAD 2>/dev/null)
   out=$(run_agent "$FIX_AGENT" "$(verify_prompt "$num" "$title" "$body")" "$issue_log" verify)
   rc=$?
+  require_origin_identity
 
   # Runs before any outcome handling so every return path (crash included)
   # leaves the operator checkout clean.
@@ -1191,6 +1237,7 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
     info "[#$num] FIX attempt $attempt/$((MAX_RETRIES+1))"
     out=$(run_agent "$FIX_AGENT" "$(fix_prompt "$num" "$title" "$body" "$feedback")" "$issue_log" fix)
     rc=$?
+    require_origin_identity
 
     guard_rc=0
     guard_agent_state "$num" fix "$branch" "$base_sha" "$before_fix_tip" || guard_rc=$?
@@ -1259,6 +1306,7 @@ $check_out"
       else
         ok "[#$num] checks passed"
       fi
+      require_origin_identity
       guard_rc=0
       guard_agent_state "$num" check "$branch" "$base_sha" "$before_fix_tip" || guard_rc=$?
       if [ "$guard_rc" -eq 2 ]; then
@@ -1308,6 +1356,7 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
 
     out=$(run_agent "$REVIEW_AGENT" "$(review_prompt "$num" "$title" "$body" "$diff")" "$issue_log" review)
     rc=$?
+    require_origin_identity
 
     guard_rc=0
     guard_agent_state "$num" review "$branch" "$base_sha" "$review_head" || guard_rc=$?
@@ -1414,6 +1463,7 @@ Full logs: \`$issue_log\` on the machine where fixbuddy ran." >/dev/null 2>&1 ||
 
   # ---- Stage 4: PUSH + PR + optional auto-merge ----
   local remote_line remote_sha="" pr_open="" push_rc=0
+  require_origin_identity
   if ! remote_line=$(cd "$PROJECT" && git ls-remote --heads origin "refs/heads/$branch" 2>>"$issue_log"); then
     err "[#$num] could not inspect remote branch before push"
     gh issue edit "$num" --repo "$REPO" --add-label "fix:blocked" >/dev/null 2>&1 || true
@@ -1454,6 +1504,7 @@ Full logs: \`$issue_log\` on the machine where fixbuddy ran." >/dev/null 2>&1 ||
     info "[#$num] replacing stale remote branch with lease pinned to $remote_sha"
   fi
   info "[#$num] PUSH $branch"
+  require_origin_identity
   if [ -n "$remote_sha" ]; then
     ( cd "$PROJECT" && git push "--force-with-lease=refs/heads/$branch:$remote_sha" origin "$review_head:refs/heads/$branch" ) >> "$issue_log" 2>&1 || push_rc=$?
   else
@@ -1474,6 +1525,7 @@ Full logs: \`$issue_log\` on the machine where fixbuddy ran." >/dev/null 2>&1 ||
     return 0
   fi
   CURRENT_PUSHED=true   # remote branch now exists — interrupt trap must not delete it
+  require_origin_identity
 
   # A branch name can move after the last local check. The refspec above pins
   # the source to the exact reviewed commit; read back the remote before PR.

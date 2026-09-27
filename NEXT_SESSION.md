@@ -1,5 +1,27 @@
 # Next session
 
+## Unreleased single-file candidate — 2026-09-27
+
+Local product commit `93b7b3a` contains a one-file `fixbuddy` command assembled from
+`src/core.sh`, `src/tui.py` and `src/wizard.sh` by `scripts/build.py`. Running
+it interactively opens an account-wide GitHub repository and open-issue view;
+`--wizard` and direct CLI flags retain the existing pipeline. The demo has
+been removed. `install.sh --local` installs only `fixbuddy`; the default
+published v0.8.0 installation path remains available. The Action points at
+the bundled command. A run now checks the selected repository against both
+origin fetch and push destinations before any writes.
+
+This is a verified local candidate, not a published release. The final bundle
+passed 48/48 offline integration and 17/17 UI tests, ShellCheck, Actionlint,
+bundle and SHA256 checks; independent delta review found 0 CRITICAL/WARN. A
+read-only account inventory returned 114 repositories, 25 open issues and 0
+unknown. `bash install.sh --local` installed the candidate at
+`~/.local/bin/fixbuddy` and its checksum matched. `pd` still reports 0 open
+audit findings but an unknown review date/commit. Do not push or publish
+without an explicit current-task instruction; after publication verify CI and
+the public installer. No real agent write/PR smoke was performed. The untracked
+`review-todo.md` belongs to Markus and remains outside the product commit.
+
 ## Published v0.8.0 — 2026-09-27
 
 PR #12 was merged to `main` as `f17d847`; its required Shell checks,
@@ -89,10 +111,10 @@ read-only-stage guards), both 2026-06-12.
 
 ## Release checklist (per release)
 
-1. Bump `VERSION` in `fixbuddy.sh` (+ header), wizard header/banner,
-   `install.sh` `DEFAULT_REF`, README one-liners; update `CHANGELOG.md`.
-2. Regenerate `SHA256SUMS` (`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py >
-   SHA256SUMS`) — `install.sh` verifies fail-closed.
+1. Bump `VERSION` in `src/core.sh` (+ header), wizard header/banner,
+   `install.sh` `DEFAULT_REF`, README install instructions; update `CHANGELOG.md`.
+2. Run `python3 scripts/build.py`, then regenerate `SHA256SUMS` for the single
+   `fixbuddy` file. The installer verifies the published checksum fail-closed.
 3. Merge via PR; then `git tag vX.Y.Z && git push origin vX.Y.Z` and
    `git tag -f v1 vX.Y.Z && git push origin v1 --force`.
 4. `gh release create vX.Y.Z` and smoke-test the install one-liner.
@@ -101,5 +123,5 @@ read-only-stage guards), both 2026-06-12.
 
 - Log retention/pruning for `~/.fixbuddy/runs`
 - New agents as they appear (validation list + run_agent case + wizard + docs)
-- The `--help` sed range (`2,51p`) must be adjusted whenever header lines are
-  added — candidate for a less brittle help mechanism
+- Help is embedded by `scripts/build.py`; update the `src/core.sh` header and
+  regenerate the bundle when adding options.

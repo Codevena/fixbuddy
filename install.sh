@@ -2,13 +2,13 @@
 # install.sh — installer for fixbuddy (https://github.com/Codevena/fixbuddy)
 #
 # Quick install:
-#   curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.0/install.sh | bash
 #
 # Options (pass after the URL as: | bash -s -- <options>):
 #   --prefix PATH   Install into PATH instead of the auto-detected location
-#   --ref TAG       Install the fixbuddy scripts from a specific git ref.
-#                   Default: v0.8.0.  Use --ref main for the latest commit.
-#   --with-tui      Also install the Python 3 terminal UI (requires a ref with it).
+#   --ref TAG       Install from a specific git ref (default: v0.9.0).
+#   --with-tui      Legacy v0.8.0 only; the current file already includes the UI.
+#   --local         Install the single-file fixbuddy beside this installer.
 #   -y, --yes       Skip the sudo confirmation prompt
 #   -h, --help      Show this help and exit
 #
@@ -17,14 +17,16 @@
 set -euo pipefail
 
 REPO_SLUG="Codevena/fixbuddy"
-DEFAULT_REF="v0.8.0"
+DEFAULT_REF="v0.9.0"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_SLUG}"
-SCRIPTS=(fixbuddy.sh fixbuddy-wizard.sh)
+SCRIPTS=(fixbuddy)
 
 PREFIX=""
 REF="$DEFAULT_REF"
 ASSUME_YES=false
 WITH_TUI=false
+LOCAL=false
+REF_SET=false
 
 # -------- Output helpers --------
 if [ -t 2 ]; then
@@ -42,13 +44,14 @@ usage() {
   cat >&2 <<'EOF'
 install.sh — installer for fixbuddy
 
-  curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.0/install.sh | bash
 
 Options (pass as: | bash -s -- <options>):
   --prefix PATH   Install into PATH instead of the auto-detected location
-  --ref TAG       Install fixbuddy scripts from a specific git ref (default: v0.8.0;
+  --ref TAG       Install fixbuddy from a specific git ref (default: v0.9.0;
                   use --ref main for the latest commit)
-  --with-tui      Also install fixbuddy-tui.py (Python 3 required to run it)
+  --with-tui      Legacy v0.8.0 only; the current file already includes the UI
+  --local         Install the single-file fixbuddy beside this installer
   -y, --yes       Skip the sudo confirmation prompt
   -h, --help      Show this help and exit
 EOF
@@ -58,16 +61,27 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --prefix) PREFIX="${2:?--prefix requires a path}"; shift 2 ;;
-    --ref)    REF="${2:?--ref requires a tag or branch name}"; shift 2 ;;
+    --ref)    REF="${2:?--ref requires a tag or branch name}"; REF_SET=true; shift 2 ;;
     --with-tui) WITH_TUI=true; shift ;;
+    --local) LOCAL=true; shift ;;
     -y|--yes) ASSUME_YES=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) err "unknown argument: $1"; usage; exit 2 ;;
   esac
 done
 
-command -v curl >/dev/null 2>&1 || die "curl is required but not installed. Install curl and re-run."
+if $LOCAL; then
+  $REF_SET && die "--local cannot be combined with --ref."
+  $WITH_TUI && die "--local already includes the terminal UI; omit --with-tui."
+else
+  command -v curl >/dev/null 2>&1 || die "curl is required but not installed. Install curl and re-run."
+fi
+SINGLE_FILE=true
+case "$REF" in
+  v0.7.*|v0.8.*) SINGLE_FILE=false; SCRIPTS=(fixbuddy.sh fixbuddy-wizard.sh) ;;
+esac
 if $WITH_TUI; then
+  $SINGLE_FILE && die "The single-file release already includes the terminal UI; omit --with-tui."
   command -v python3 >/dev/null 2>&1 || die "--with-tui requires Python 3."
   SCRIPTS+=(fixbuddy-tui.py)
 fi
@@ -130,6 +144,40 @@ if [ -n "$SUDO" ]; then
 fi
 
 # -------- Download into a temp dir --------
+if $LOCAL; then
+  installer_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  source_file="$installer_dir/fixbuddy"
+  [ -f "$source_file" ] || die "No fixbuddy file beside install.sh. Build it with python3 scripts/build.py first."
+  [ "$(head -n 1 "$source_file")" = '#!/usr/bin/env bash' ] || die "Local fixbuddy has an unexpected shebang."
+  bash -n "$source_file" || die "Local fixbuddy failed Bash syntax validation."
+  if [ -f "$installer_dir/SHA256SUMS" ]; then
+    expected="$(awk '$2 == "fixbuddy" || $2 == "*fixbuddy" {print $1; exit}' "$installer_dir/SHA256SUMS")"
+    [ -n "$expected" ] || die "Local SHA256SUMS has no fixbuddy entry."
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual="$(sha256sum "$source_file" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+      actual="$(shasum -a 256 "$source_file" | awk '{print $1}')"
+    else
+      die "Local checksum verification requires sha256sum or shasum."
+    fi
+    [ "$actual" = "$expected" ] || die "Local fixbuddy checksum mismatch. Rebuild SHA256SUMS."
+  fi
+  [ -d "$DEST" ] || as_root mkdir -p "$DEST"
+  stage="$DEST/.fixbuddy.install.$$"
+  trap 'as_root rm -f "$stage" 2>/dev/null || true' EXIT
+  as_root cp "$source_file" "$stage"
+  as_root chmod +x "$stage"
+  as_root mv "$stage" "$DEST/fixbuddy"
+  trap - EXIT
+  ok "Installed single-file fixbuddy to $DEST"
+  if in_path "$DEST"; then
+    printf '\nRun:  fixbuddy\n' >&2
+  else
+    warn "$DEST is not in your PATH. Run: $DEST/fixbuddy"
+  fi
+  exit 0
+fi
+
 TMP_DL="$(mktemp -d "${TMPDIR:-/tmp}/fixbuddy-install.XXXXXX")"
 STAGE1=""
 STAGE2=""
@@ -187,15 +235,31 @@ if curl -fsSL "$RAW_BASE/$REF/SHA256SUMS" -o "$TMP_DL/SHA256SUMS" 2>/dev/null; t
       *) warn "Ref '$REF' is not a release tag; the bundled SHA256SUMS may not match these scripts." ;;
     esac
   else
-    $WITH_TUI && die "--with-tui requires sha256sum or shasum to verify its checksum."
+    { $WITH_TUI || $SINGLE_FILE; } && die "Installing FixBuddy requires sha256sum or shasum to verify its checksum."
     warn "No sha256 tool (sha256sum/shasum) found — skipping checksum verification."
   fi
 else
-  $WITH_TUI && die "--with-tui requires SHA256SUMS at ref '$REF'."
+  { $WITH_TUI || $SINGLE_FILE; } && die "Installing FixBuddy requires SHA256SUMS at ref '$REF'."
   warn "No SHA256SUMS published at ref '$REF' — skipping checksum verification."
 fi
 
 # -------- Install atomically --------
+if $SINGLE_FILE; then
+  [ -d "$DEST" ] || as_root mkdir -p "$DEST"
+  STAGE1="$DEST/.fixbuddy.install.$$"
+  as_root cp "$TMP_DL/fixbuddy" "$STAGE1"
+  as_root chmod +x "$STAGE1"
+  as_root mv "$STAGE1" "$DEST/fixbuddy"
+  STAGE1=""
+  ok "Installed single-file fixbuddy ($REF) to $DEST"
+  if in_path "$DEST"; then
+    printf '\nRun:  fixbuddy\n' >&2
+  else
+    warn "$DEST is not in your PATH. Run: $DEST/fixbuddy"
+  fi
+  exit 0
+fi
+
 new_version="$(script_version "$TMP_DL/fixbuddy.sh")"
 [ -n "$new_version" ] || new_version="$REF"
 

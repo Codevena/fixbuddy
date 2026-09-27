@@ -5,8 +5,10 @@ on:
   pull_request:
     paths:
       - 'action.yml'
-      - 'fixbuddy.sh'
-      - 'fixbuddy-wizard.sh'
+      - 'fixbuddy'
+      - 'src/core.sh'
+      - 'src/tui.py'
+      - 'src/wizard.sh'
       - '.github/workflows/action-smoke.yml'
 
 jobs:

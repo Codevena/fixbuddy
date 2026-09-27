@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# The demo pushes to a local bare repo. Only its origin identity is simulated;
+# all other Git operations (including the push) use the real Git executable.
+set -u
+if [ "${1:-}" = remote ] && [ "${2:-}" = get-url ]; then
+  case " $* " in
+    *" --push "*) printf '%s\n' 'git@github.com:acme/calc.git' ;;
+    *) printf '%s\n' 'https://github.com/acme/calc.git' ;;
+  esac
+  exit 0
+fi
+exec "${DEMO_REAL_GIT:?}" "$@"

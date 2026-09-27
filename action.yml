@@ -92,11 +92,11 @@ runs:
         fi
 
         # Configure git to use GH_TOKEN as a credential helper so that plain
-        # "git push" calls inside fixbuddy.sh are authenticated (gh CLI already
+        # "git push" calls inside fixbuddy are authenticated (gh CLI already
         # picks up GH_TOKEN via the env, but git itself needs this extra step).
         gh auth setup-git
 
-        cmd=("$FIXBUDDY_ACTION_PATH/fixbuddy.sh"
+        cmd=("$FIXBUDDY_ACTION_PATH/fixbuddy"
           --repo "$FIXBUDDY_REPO"
           --project "$FIXBUDDY_PROJECT"
           --fix-agent "$FIXBUDDY_FIX_AGENT"
@@ -144,4 +144,4 @@ runs:
         FIXBUDDY_LOG_POINTER: ${{ steps.run-fixbuddy.outputs.log_pointer }}
         FIXBUDDY_ACTION_PATH: ${{ github.action_path }}
       run: |
-        "$FIXBUDDY_ACTION_PATH/action-collect-logs.sh"
+        "$FIXBUDDY_ACTION_PATH/src/action-collect-logs.sh"

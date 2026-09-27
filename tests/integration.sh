@@ -563,6 +563,74 @@ test_unstick_reads_past_two_hundred() {
   assert_grep "$MUTLOG" '^issue edit 201 .*--remove-label fix:pr-open'
 }
 
+test_closed_merged_issue_gets_applied_label() {
+  # A human merge closes the issue before the next FixBuddy run. Reconciliation
+  # must replace the stale PR-open label even though the issue is now closed.
+  SCENARIO=closed-merged; make_fixture
+  run_fixbuddy --max 1
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$MUTLOG" '^issue edit 42 .*--add-label fix:applied.*--remove-label fix:pr-open'
+  assert_no_grep "$MUTLOG" '^pr create '
+  [ ! -s "$STAGELOG" ] || fail "closed issue invoked an agent"
+}
+
+test_closed_issue_without_merged_pr_keeps_label() {
+  SCENARIO=closed-unmerged; make_fixture
+  run_fixbuddy --max 1
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_no_grep "$MUTLOG" '^issue edit 42 '
+  [ ! -s "$STAGELOG" ] || fail "closed issue invoked an agent"
+}
+
+test_old_merge_does_not_apply_later_manual_closure() {
+  # A prior fix/issue-42 PR merged, then the issue was reopened and later
+  # closed manually. Only the current ClosedEvent, not branch history, counts.
+  SCENARIO=closed-old-merge; make_fixture
+  run_fixbuddy --max 1
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_no_grep "$MUTLOG" '^issue edit 42 '
+}
+
+test_other_merged_pr_cannot_apply_closed_issue() {
+  SCENARIO=closed-other-merged; make_fixture
+  run_fixbuddy --max 1
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_no_grep "$MUTLOG" '^issue edit 42 '
+}
+
+test_fork_merge_cannot_apply_closed_issue() {
+  # A fork may use the same head-branch name, but FixBuddy only pushes branches
+  # in the selected repository. Its merge must not be attributed to FixBuddy.
+  SCENARIO=closed-fork-merged; make_fixture
+  run_fixbuddy --max 1
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_no_grep "$MUTLOG" '^issue edit 42 '
+}
+
+test_graphql_partial_error_cannot_apply_closed_issue() {
+  SCENARIO=closed-graphql-error; make_fixture
+  run_fixbuddy --max 1
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_no_grep "$MUTLOG" '^issue edit 42 '
+  assert_substr "$RUNLOG" 'leaving labels alone'
+}
+
+test_closed_issue_pr_lookup_failure_keeps_label() {
+  SCENARIO=closed-pr-query-fail; make_fixture
+  run_fixbuddy --max 1
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_no_grep "$MUTLOG" '^issue edit 42 '
+  assert_substr "$RUNLOG" 'leaving labels alone'
+}
+
+test_closed_merged_issue_dry_run_is_read_only() {
+  SCENARIO=closed-merged; make_fixture
+  run_fixbuddy --dry-run
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  [ ! -s "$MUTLOG" ] || fail "dry-run relabeled a closed issue"
+  [ ! -s "$STAGELOG" ] || fail "dry-run invoked an agent"
+}
+
 test_one_second_agent_timeout() {
   SCENARIO=slowverify; make_fixture
   local started elapsed
@@ -696,7 +764,7 @@ test_installer_local_is_one_file() {
   [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed"
   [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "more than one file installed"
   "$TMP/installed/fixbuddy" --version > "$RUNLOG" 2>&1
-  assert_substr "$RUNLOG" 'fixbuddy 0.9.1'
+  assert_substr "$RUNLOG" 'fixbuddy 0.9.2-dev'
 }
 
 test_installer_main_is_one_file() {
@@ -739,6 +807,14 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_codex_final_rejection_overrides_raw_approval
        test_codex_timeout_with_final_approval_cannot_push
        test_queue_reads_past_two_hundred test_unstick_reads_past_two_hundred
+       test_closed_merged_issue_gets_applied_label
+       test_closed_issue_without_merged_pr_keeps_label
+       test_old_merge_does_not_apply_later_manual_closure
+       test_other_merged_pr_cannot_apply_closed_issue
+       test_fork_merge_cannot_apply_closed_issue
+       test_graphql_partial_error_cannot_apply_closed_issue
+       test_closed_issue_pr_lookup_failure_keeps_label
+       test_closed_merged_issue_dry_run_is_read_only
        test_one_second_agent_timeout test_action_logs_copy_only_this_run
        test_json_preview_uses_core_queue test_json_preview_empty_queue
        test_wizard_autonomous_mode_is_explicit

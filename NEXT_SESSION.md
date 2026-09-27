@@ -26,19 +26,30 @@ v0.9.1** against the same private synthetic issue. After removing the old
 off. Claude verified and fixed it, the Python check passed, Codex approved,
 and FixBuddy opened one private PR. The PR has one commit and changes only the
 intended `src/calc.py` line; the Python test passed on the fetched PR commit.
-The issue is labeled `fix:pr-open`; the PR remains open and unmerged, and the
-local test checkout is clean on `main`. No further provider retry occurred.
+Markus then authorized its merge. GitHub merged it as `8b392ce` and closed the
+issue; the Python test passes on the merged `main` commit. The issue initially
+kept a stale `fix:pr-open` label because FixBuddy's reconciliation read only
+open issues. The unreleased `0.9.2-dev` repair on
+`fix/closed-merged-issue-label` checks GitHub's latest issue-closure event and
+labels only a merged same-repository `fix/issue-N` PR as applied. One controlled
+write run against the private fixture replaced the stale label with
+`fix:applied`; no agent CLI was invoked, no new PR was created, and the local
+checkout remained clean. The private repository and remote fix branch remain
+available. No further provider retry occurred.
 
 Offline verification: causal RED and focused GREEN 9/9, integration 54/54,
 TUI 17/17, ShellCheck, Actionlint, syntax, bundle/SHA256 checks, manual
 Gitleaks scan of the three release commits, and independent post-review with
-0 CRITICAL/WARN. CodeRabbit's optional PR #15 review was pending at last
-check. The untracked `review-todo.md` is user-owned and unchanged.
+0 CRITICAL/WARN. CodeRabbit posted no findings on public PRs #12, #13, #15
+and #16, but their optional checks are still pending; check the next FixBuddy
+PR for a completed result. The untracked `review-todo.md` is user-owned and
+unchanged.
 
-Next: leave the private PR unmerged for Markus to inspect; later clean up the
-private test fixture only with an explicit decision. Inspect any later
-CodeRabbit findings. ScoutBuddy is a separate planned app, to be implemented
-in another session.
+Next: review the local closed-issue label repair and decide on publication.
+Keep the private fixture until the release candidate is verified, then decide
+separately whether to retain it. A launch/adoption test is planned after this
+fix; no post has been published. ScoutBuddy is a separate app under
+development in another session.
 
 ## Published v0.9.0 — 2026-09-27
 

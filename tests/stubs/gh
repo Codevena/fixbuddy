@@ -50,9 +50,22 @@ JSON
       echo '[[]]'
       exit 0
     fi
+    if [[ "$*" == *"state=closed"* ]]; then
+      if [[ "$*" != *"labels=fix%3Apr-open"* ]]; then
+        echo "closed issue scan must filter by fix:pr-open" >&2
+        exit 1
+      fi
+      if [[ "$scenario" == closed-* ]]; then
+        echo '[[{"number":42,"title":"closed test issue","labels":[{"name":"fix:pr-open"}],"html_url":"https://github.com/acme/app/issues/42","state":"closed","body":"synthetic fix","pull_request":null}]]'
+      else
+        echo '[[]]'
+      fi
+      exit 0
+    fi
     case "$scenario" in
       many) fixture_issues 201 false | jq -c '[.]' ;;
       many-stuck) fixture_issues 201 true | jq -c '[.]' ;;
+      closed-*) echo '[[]]' ;;
       empty) echo '[[]]' ;;
       *) cat <<'JSON'
 [[{"number":7,"title":"app outputs wrong text","labels":[{"name":"bug"},{"name":"severity:high"}],"url":"https://github.com/acme/app/issues/7","html_url":"https://github.com/acme/app/issues/7","state":"open","body":"src/app.txt should contain a fixed line. Please fix the output."}]]
@@ -64,6 +77,27 @@ JSON
 {"number":7,"title":"app outputs wrong text","labels":[{"name":"bug"},{"name":"severity:high"}],"url":"https://github.com/acme/app/issues/7","state":"OPEN","body":"src/app.txt should contain a fixed line. Please fix the output."}
 JSON
     ;;
+  "api graphql")
+    if [[ "$*" != *"owner=acme"* ]] || [[ "$*" != *"name=app"* ]] \
+      || [[ "$*" != *"issueNumber=42"* ]] || [[ "$*" != *"CLOSED_EVENT"* ]]; then
+      echo "closure query targeted the wrong issue" >&2
+      exit 1
+    fi
+    if [ "$scenario" = "closed-pr-query-fail" ]; then
+      echo "temporary GraphQL read failure" >&2
+      exit 1
+    fi
+    case "$scenario" in
+      closed-merged)
+        echo '{"data":{"repository":{"issue":{"state":"CLOSED","timelineItems":{"nodes":[{"__typename":"ClosedEvent","closer":{"__typename":"PullRequest","headRefName":"fix/issue-42","merged":true,"isCrossRepository":false,"repository":{"nameWithOwner":"acme/app"}}}]}}}}}' ;;
+      closed-other-merged)
+        echo '{"data":{"repository":{"issue":{"state":"CLOSED","timelineItems":{"nodes":[{"__typename":"ClosedEvent","closer":{"__typename":"PullRequest","headRefName":"fix/issue-99","merged":true,"isCrossRepository":false,"repository":{"nameWithOwner":"acme/app"}}}]}}}}}' ;;
+      closed-fork-merged)
+        echo '{"data":{"repository":{"issue":{"state":"CLOSED","timelineItems":{"nodes":[{"__typename":"ClosedEvent","closer":{"__typename":"PullRequest","headRefName":"fix/issue-42","merged":true,"isCrossRepository":true,"repository":{"nameWithOwner":"acme/app"}}}]}}}}}' ;;
+      closed-graphql-error)
+        echo '{"errors":[{"message":"partial data"}],"data":{"repository":{"issue":{"state":"CLOSED","timelineItems":{"nodes":[{"__typename":"ClosedEvent","closer":{"__typename":"PullRequest","headRefName":"fix/issue-42","merged":true,"isCrossRepository":false,"repository":{"nameWithOwner":"acme/app"}}}]}}}}}' ;;
+      *) echo '{"data":{"repository":{"issue":{"state":"CLOSED","timelineItems":{"nodes":[{"__typename":"ClosedEvent","closer":null}]}}}}}' ;;
+    esac ;;
   "issue edit"|"issue comment"|"issue close") mutate "$@" ;;
   "pr create")
     mutate "$@"
@@ -75,9 +109,15 @@ JSON
   "pr merge")   mutate "$@" ;;
   "pr view")    echo "false" ;;   # not merged yet -> fix:pr-open path
   "pr list")
+    if [ "$scenario" = "closed-pr-query-fail" ] && [[ "$*" == *"--state merged"* ]]; then
+      echo "temporary PR read failure" >&2
+      exit 1
+    fi
     case "$*" in
       *"length > 0"*)
-        if [ "$scenario" = "stale-open-pr" ]; then echo "true"; else echo "false"; fi ;;
+        if [ "$scenario" = "stale-open-pr" ]; then echo "true"
+        elif { [ "$scenario" = "closed-merged" ] || [ "$scenario" = "closed-old-merge" ]; } && [[ "$*" == *"--state merged"* ]] && [[ "$*" == *"fix/issue-42"* ]]; then echo "true"
+        else echo "false"; fi ;;
       *) echo "" ;;
     esac ;;
   "repo view")  echo "main" ;;

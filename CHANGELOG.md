@@ -6,6 +6,14 @@ All notable changes to fixbuddy are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-27
+
+### Fixed
+- After a human merges a FixBuddy PR and GitHub closes its issue, the next
+  write run replaces the stale `fix:pr-open` label with `fix:applied` only if
+  GitHub's latest closure event identifies that merged PR. Unclear or failed
+  closure reads leave labels unchanged; dry-run stays read-only.
+
 ## [0.9.1] - 2026-09-27
 
 ### Fixed
@@ -45,6 +53,10 @@ All notable changes to fixbuddy are documented here. The format is based on
 - Paginated issue reads remove the 200-issue ceiling for both the queue and
   closed-PR reconciliation.
 - The composite action exposes `logs-path` and copies only its own run logs.
+
+### Changed
+- The GitHub Action description now spells out "pull requests" and names the
+  supported agents for its Marketplace listing (change `73e723b`).
 
 ### Fixed
 - Agent branch switches and unexpected base changes are detected and blocked

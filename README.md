@@ -50,14 +50,14 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 2. **Fix**: the fix agent creates a local commit on `fix/issue-N`.
 3. **Review**: the review agent reviews the committed diff and runs project checks.
 4. **PR**: fixbuddy pushes the branch and opens a PR.
-5. **Merge handling**: if auto-merge is enabled, fixbuddy requests it. `fix:applied` is added only when GitHub reports the PR as merged. Open PRs are labeled `fix:pr-open` to avoid duplicate work.
+5. **Merge handling**: if auto-merge is enabled, fixbuddy requests it. `fix:applied` is added only when GitHub reports the PR as merged; after a human merge, the next non-dry-run FixBuddy invocation reconciles the closed issue's label. Open PRs are labeled `fix:pr-open` to avoid duplicate work.
 
 ## Quick Start
 
 Install the single-file release on macOS or Linux (including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.2/install.sh | bash
 gh auth login
 fixbuddy
 ```

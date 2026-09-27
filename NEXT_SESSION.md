@@ -1,5 +1,32 @@
 # Next session
 
+## Local v0.9.1-dev follow-up — 2026-09-27 (not pushed)
+
+One authorized Issue→PR smoke in a **private synthetic test repository** ran
+Claude VERIFY and FIX, then a passing Python check. Codex reviewed and approved
+the committed change, but its stdout transcript repeated `DONE-APPROVED`.
+FixBuddy's strict one-marker parser correctly rejected the ambiguous stream:
+the issue is now labeled `fix:rejected`; no PR, remote fix branch or merge was
+created. Exactly one real provider run was used; no automatic retry followed.
+Keep the private repository and issue identifiers in the private Brain note,
+not in this public repository.
+
+Local branch `fix/codex-final-message` contains product commit `21db76b`
+(`0.9.1-dev`). It uses Codex's `--output-last-message` for the decision while
+preserving raw CLI output in the log and failing closed on missing final
+messages, nonzero exits and timeouts. Causal RED then focused GREEN 9/9,
+complete offline integration 54/54, terminal UI 17/17, ShellCheck, Actionlint,
+syntax, bundle and SHA256 checks passed; independent post-review reported
+0 CRITICAL/WARN. The installed/public `fixbuddy 0.9.0`, `main`, `v1` and
+`v0.9.0` remain unchanged. The untracked `review-todo.md` is user-owned.
+
+Next: review the local patch and decide on publication. A second live
+Claude/Codex run requires a separate cost decision; if authorized, first
+reconcile the synthetic issue's `fix:rejected` label and then run the exact
+`--issue 1 --max 1 --max-retries 0 --no-auto-merge` scenario against the
+private fixture with the locally built bundle. The second scanning app is
+planning-only in this session; implementation belongs in a new session.
+
 ## Published v0.9.0 — 2026-09-27
 
 PR #13 merged to `main` as `7799e3e` after Shell, integration and Action-smoke

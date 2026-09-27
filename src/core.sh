@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy v0.9.0 — two-agent issue fixing with independent review
+# fixbuddy v0.9.1 — two-agent issue fixing with independent review
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -54,7 +54,7 @@
 #   filter), and a config-provided label/check/notify cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.9.0"
+VERSION="0.9.1"
 
 # -------- Defaults --------
 REPO=""
@@ -541,9 +541,10 @@ run_agent() {
     echo "----- OUTPUT -----"
   } >> "$logfile"
 
-  local outfile timeout_file
+  local outfile timeout_file codex_final_file=""
   outfile=$(mktemp)
   timeout_file=$(mktemp)
+  if [ "$agent" = "codex" ]; then codex_final_file=$(mktemp); fi
 
   # agy (Antigravity CLI) has no read-only mode; verify/review add --sandbox
   # (terminal restrictions) as defense in depth. --add-dir grants workspace access
@@ -559,7 +560,9 @@ run_agent() {
       printf "%s" "$prompt" | env -u GH_TOKEN -u GITHUB_TOKEN claude --dangerously-skip-permissions -p - >"$outfile" 2>&1 &
       ;;
     codex)
-      printf "%s" "$prompt" | env -u GH_TOKEN -u GITHUB_TOKEN codex exec --dangerously-bypass-approvals-and-sandbox >"$outfile" 2>&1 &
+      # Codex stdout includes a transcript (and may repeat DONE markers).
+      # Only its separately written final message may authorize the next stage.
+      printf "%s" "$prompt" | env -u GH_TOKEN -u GITHUB_TOKEN codex exec --dangerously-bypass-approvals-and-sandbox --output-last-message "$codex_final_file" >"$outfile" 2>&1 &
       ;;
     opencode)
       env -u GH_TOKEN -u GITHUB_TOKEN opencode run --dangerously-skip-permissions "$prompt" </dev/null >"$outfile" 2>&1 &
@@ -629,16 +632,32 @@ run_agent() {
     echo "[fixbuddy-crash] agent exited rc=$rc (output markers cannot override a failed CLI)" >> "$outfile"
     rc=125
   fi
+  if [ "$agent" = "codex" ] && [ "$rc" -eq 0 ] && [ ! -s "$codex_final_file" ]; then
+    echo "[fixbuddy-crash] Codex returned no final message; transcript markers are ignored" >> "$outfile"
+    rc=125
+  fi
 
   kill "$watch_pid" 2>/dev/null
   wait "$watch_pid" 2>/dev/null
   [ -n "$AGENT_PIDFILE" ] && : > "$AGENT_PIDFILE"
 
-  local out
-  out=$(cat "$outfile")
+  local out raw
+  raw=$(cat "$outfile")
+  if [ "$agent" = "codex" ]; then
+    printf '%s\n' "$raw" >> "$logfile"
+    if [ "$rc" -eq 0 ]; then
+      out=$(cat "$codex_final_file")
+      printf '\n----- CODEX FINAL MESSAGE -----\n%s\n' "$out" >> "$logfile"
+    else
+      out=""  # never return transcript markers after a failed Codex call
+    fi
+    rm -f "$codex_final_file"
+  else
+    out="$raw"
+    printf '%s\n' "$out" >> "$logfile"
+  fi
   rm -f "$outfile"
 
-  printf "%s\n" "$out" >> "$logfile"
   echo "===== END $agent (rc=$rc) =====" >> "$logfile"
   printf "%s" "$out"
   return "$rc"

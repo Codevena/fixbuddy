@@ -490,8 +490,63 @@ test_nonzero_reviewer_exit_cannot_approve() {
   SCENARIO=reviewexitbad; make_fixture
   run_fixbuddy --max-retries 0
   [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$STAGELOG" '^codex-final:DONE-APPROVED$'
   assert_no_grep "$MUTLOG" '^pr create '
   assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:blocked'
+}
+
+test_codex_verbose_transcript_uses_only_final_message() {
+  SCENARIO=codexverbose; make_fixture
+  run_fixbuddy --max-retries 0
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$STAGELOG" '^codex-final:DONE-APPROVED$'
+  assert_grep "$MUTLOG" '^pr create .*--head fix/issue-7'
+  git -C "$TMP/origin.git" show-ref --verify --quiet refs/heads/fix/issue-7 \
+    || fail "approved final message did not push the fix branch"
+}
+
+test_codex_as_fix_agent_uses_final_verify_and_fix_messages() {
+  SCENARIO=codexfixer; make_fixture
+  run_fixbuddy --fix-agent codex --review-agent claude --max-retries 0
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$STAGELOG" '^codex-final:DONE-PROCEED$'
+  assert_grep "$STAGELOG" '^codex-final:DONE-FIX-APPLIED$'
+  assert_grep "$STAGELOG" '^claude:review$'
+  assert_grep "$MUTLOG" '^pr create .*--head fix/issue-7'
+  git -C "$TMP/origin.git" show refs/heads/fix/issue-7:src/app.txt | grep -q 'fixed by codex' \
+    || fail "Codex fix was not pushed after a canonical final message"
+}
+
+test_codex_empty_final_message_blocks_push() {
+  SCENARIO=codexmissing; make_fixture
+  run_fixbuddy --max-retries 0
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_no_grep "$MUTLOG" '^pr create '
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:blocked'
+  git -C "$TMP/origin.git" show-ref --verify --quiet refs/heads/fix/issue-7 \
+    && fail "raw approval was pushed despite an empty final message"
+}
+
+test_codex_final_rejection_overrides_raw_approval() {
+  SCENARIO=codexfinalreject; make_fixture
+  run_fixbuddy --max-retries 0
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$STAGELOG" '^codex-final:DONE-REJECTED:'
+  assert_no_grep "$MUTLOG" '^pr create '
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:rejected'
+  git -C "$TMP/origin.git" show-ref --verify --quiet refs/heads/fix/issue-7 \
+    && fail "raw approval was pushed despite canonical rejection"
+}
+
+test_codex_timeout_with_final_approval_cannot_push() {
+  SCENARIO=reviewtimeoutfinal; make_fixture
+  run_fixbuddy --max-retries 0 --agent-timeout 1 --crash-abort 1
+  [ "$RC" -eq 0 ] || fail "exit code $RC"
+  assert_grep "$STAGELOG" '^codex-final:DONE-APPROVED$'
+  assert_no_grep "$MUTLOG" '^pr create '
+  assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:blocked'
+  git -C "$TMP/origin.git" show-ref --verify --quiet refs/heads/fix/issue-7 \
+    && fail "timed-out approval was pushed"
 }
 
 test_queue_reads_past_two_hundred() {
@@ -586,18 +641,18 @@ test_help_does_not_cut_off_header() {
 make_install_fixture() {
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/fixbuddy-install-itest.XXXXXX")"
   RUNLOG="$TMP/install.log"
-  mkdir -p "$TMP/source/v0.7.1" "$TMP/source/v0.8.0" "$TMP/source/v0.9.0" "$TMP/source/main" "$TMP/bin"
+  mkdir -p "$TMP/source/v0.7.1" "$TMP/source/v0.8.0" "$TMP/source/v0.9.1" "$TMP/source/main" "$TMP/bin"
   for ref in v0.7.1 v0.8.0 main; do
     cp "$ROOT/src/core.sh" "$TMP/source/$ref/fixbuddy.sh"
     cp "$ROOT/src/wizard.sh" "$TMP/source/$ref/fixbuddy-wizard.sh"
   done
   cp "$ROOT/src/tui.py" "$TMP/source/v0.8.0/fixbuddy-tui.py"
   cp "$ROOT/src/tui.py" "$TMP/source/main/fixbuddy-tui.py"
-  cp "$ROOT/fixbuddy" "$TMP/source/v0.9.0/fixbuddy"
+  cp "$ROOT/fixbuddy" "$TMP/source/v0.9.1/fixbuddy"
   cp "$ROOT/fixbuddy" "$TMP/source/main/fixbuddy"
   ( cd "$TMP/source/v0.7.1" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh > SHA256SUMS )
   ( cd "$TMP/source/v0.8.0" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py > SHA256SUMS )
-  ( cd "$TMP/source/v0.9.0" && shasum -a 256 fixbuddy > SHA256SUMS )
+  ( cd "$TMP/source/v0.9.1" && shasum -a 256 fixbuddy > SHA256SUMS )
   ( cd "$TMP/source/main" && shasum -a 256 fixbuddy > SHA256SUMS )
   ln -s "$STUBS/curl" "$TMP/bin/curl"
 }
@@ -610,7 +665,7 @@ test_installer_default_ref_is_one_file() {
   [ "$RC" -eq 0 ] || fail "default installer exit code $RC"
   [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed"
   [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "default installed more than one file"
-  assert_substr "$RUNLOG" 'v0.9.0'
+  assert_substr "$RUNLOG" 'v0.9.1'
 }
 
 test_installer_legacy_ref_stays_two_scripts() {
@@ -641,7 +696,7 @@ test_installer_local_is_one_file() {
   [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed"
   [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "more than one file installed"
   "$TMP/installed/fixbuddy" --version > "$RUNLOG" 2>&1
-  assert_substr "$RUNLOG" 'fixbuddy 0.9.0'
+  assert_substr "$RUNLOG" 'fixbuddy 0.9.1'
 }
 
 test_installer_main_is_one_file() {
@@ -678,6 +733,11 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_failed_pr_creation_preserves_replaced_remote_branch
        test_mixed_verdict_cannot_approve test_prefixed_approval_cannot_approve
        test_nonzero_reviewer_exit_cannot_approve
+       test_codex_verbose_transcript_uses_only_final_message
+       test_codex_as_fix_agent_uses_final_verify_and_fix_messages
+       test_codex_empty_final_message_blocks_push
+       test_codex_final_rejection_overrides_raw_approval
+       test_codex_timeout_with_final_approval_cannot_push
        test_queue_reads_past_two_hundred test_unstick_reads_past_two_hundred
        test_one_second_agent_timeout test_action_logs_copy_only_this_run
        test_json_preview_uses_core_queue test_json_preview_empty_queue

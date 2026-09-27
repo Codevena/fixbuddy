@@ -6,6 +6,8 @@ All notable changes to fixbuddy are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-27
+
 ### Fixed
 - After a human merges a FixBuddy PR and GitHub closes its issue, the next
   write run replaces the stale `fix:pr-open` label with `fix:applied` only if

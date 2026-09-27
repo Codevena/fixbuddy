@@ -1,6 +1,10 @@
 # macOS
 .DS_Store
 
+# Optional Python terminal UI
+__pycache__/
+*.pyc
+
 # Claude Code / IDE local state
 .claude/
 

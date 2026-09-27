@@ -49,15 +49,42 @@ Closes #7" )
 }
 
 case "$scenario:$stage" in
-  happy:verify|reject:verify|check:verify)
+  happy:verify|reject:verify|check:verify|fixswitch:verify|reviewswitch:verify|mixedverdict:verify|prefixverdict:verify|stale-open-pr:verify|pushrace:verify|pr-create-fail:verify)
     echo "Reproduced the problem. The issue is real."
     echo "DONE-PROCEED" ;;
-  happy:fix|reject:fix|check:fix)
+  happy:fix|reject:fix|check:fix|reviewswitch:fix|mixedverdict:fix|prefixverdict:fix|reviewexitbad:fix|reviewcommitdirty:fix|stale-open-pr:fix|freshbase:fix|pushrace:fix|pr-create-fail:fix)
     do_fix_commit
     echo "DONE-FIX-APPLIED" ;;
-  happy:review)
+  happy:review|stale-open-pr:review|freshbase:review|pushrace:review|pr-create-fail:review)
     echo "Diff is correct, minimal, in scope."
     echo "DONE-APPROVED" ;;
+  fixswitch:fix)
+    ( cd "$project" && git checkout -q main && echo "rogue" >> src/app.txt \
+      && git add src/app.txt && git commit -q -m "rogue base commit" )
+    echo "DONE-FIX-APPLIED" ;;
+  reviewswitch:review)
+    ( cd "$project" && git checkout -q main && echo "rogue" >> src/app.txt \
+      && git add src/app.txt && git commit -q -m "rogue review commit" )
+    echo "DONE-APPROVED" ;;
+  mixedverdict:review)
+    echo "DONE-APPROVED: but checks failed"
+    echo "DONE-REJECTED: tests fail" ;;
+  prefixverdict:review)
+    echo "DONE-APPROVED: but not exact" ;;
+  reviewexitbad:verify)
+    echo "DONE-PROCEED" ;;
+  freshbase:verify)
+    if grep -q 'new remote base' "$project/src/app.txt"; then
+      echo "DONE-PROCEED"
+    else
+      echo "DONE-FALSE-POSITIVE: outdated local checkout"
+    fi ;;
+  reviewexitbad:review)
+    echo "DONE-APPROVED"
+    exit 1 ;;
+  slowverify:verify)
+    sleep 20
+    echo "DONE-PROCEED" ;;
   reject:review)
     echo "DONE-REJECTED: the fix lacks a regression test" ;;
   falsepos:verify)
@@ -102,6 +129,13 @@ case "$scenario:$stage" in
   reviewcommit:review)
     ( cd "$project" && echo "rogue" >> src/app.txt && git add src/app.txt \
       && git commit -q -m "rogue reviewer commit" )
+    echo "DONE-APPROVED" ;;
+  reviewcommitdirty:verify)
+    echo "DONE-PROCEED" ;;
+  reviewcommitdirty:review)
+    ( cd "$project" && echo "rogue" >> src/app.txt && git add src/app.txt \
+      && git commit -q -m "rogue reviewer commit" \
+      && echo "post-commit residue" >> src/app.txt )
     echo "DONE-APPROVED" ;;
   reviewdirty:verify)
     echo "DONE-PROCEED" ;;

@@ -21,15 +21,24 @@ jobs:
         run: |
           bash -n fixbuddy.sh
           bash -n fixbuddy-wizard.sh
+          bash -n install.sh
+          bash -n action-collect-logs.sh
           bash -n tests/integration.sh
           bash -n tests/stubs/agent
           bash -n tests/stubs/gh
+          bash -n tests/stubs/curl
+          bash -n tests/stubs/git-push-race
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: ShellCheck
-        run: shellcheck fixbuddy.sh fixbuddy-wizard.sh tests/integration.sh tests/stubs/agent tests/stubs/gh
+        run: shellcheck fixbuddy.sh fixbuddy-wizard.sh install.sh action-collect-logs.sh tests/integration.sh tests/stubs/agent tests/stubs/gh tests/stubs/curl tests/stubs/git-push-race
+
+      - name: Python syntax and terminal UI tests
+        run: |
+          python3 -m py_compile fixbuddy-tui.py
+          python3 -m unittest discover -s tests -p 'test_tui.py'
 
   integration:
     name: Integration tests (mocked CLIs)

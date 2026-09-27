@@ -3,6 +3,19 @@
 # JSON; every MUTATING call is appended verbatim to $FIXBUDDY_TEST_MUTLOG so
 # tests can assert exactly what fixbuddy would have changed on GitHub.
 set -u
+scenario="${FIXBUDDY_TEST_SCENARIO:-happy}"
+
+fixture_issues() {
+  local count="$1" stuck="$2"
+  jq -nc --argjson count "$count" --argjson stuck "$stuck" '
+    [range(1; $count + 1) | {
+      number: ., title: ("issue " + tostring),
+      labels: (if $stuck and . == $count then [{name:"fix:pr-open"}] else [{name:"bug"}] end),
+      url: ("https://github.com/acme/app/issues/" + tostring),
+      html_url: ("https://github.com/acme/app/issues/" + tostring),
+      state: "open", body: "test issue"
+    }]'
+}
 
 mutate() {
   [ -n "${FIXBUDDY_TEST_MUTLOG:-}" ] && echo "$*" >> "$FIXBUDDY_TEST_MUTLOG"
@@ -12,10 +25,27 @@ mutate() {
 case "${1:-} ${2:-}" in
   "label create")  mutate "$@" ;;
   "issue list")
+    if [ "$scenario" = "many" ] || [ "$scenario" = "many-stuck" ]; then
+      if [ "$scenario" = "many-stuck" ] && [[ "$*" == *"fix:pr-open"* ]]; then echo "[]"
+      elif [ "$scenario" = "many-stuck" ]; then fixture_issues 200 true
+      elif [[ "$*" == *"fix:pr-open"* ]]; then echo "[]"
+      else fixture_issues 200 false; fi
+      exit 0
+    fi
     case "$*" in
       *"fix:pr-open"*) echo "[]" ;;  # unstick scan: nothing stuck
       *) cat <<'JSON'
 [{"number":7,"title":"app outputs wrong text","labels":[{"name":"bug"},{"name":"severity:high"}],"url":"https://github.com/acme/app/issues/7","body":"src/app.txt should contain a fixed line. Please fix the output."}]
+JSON
+      ;;
+    esac ;;
+  "api --paginate")
+    case "$scenario" in
+      many) fixture_issues 201 false | jq -c '[.]' ;;
+      many-stuck) fixture_issues 201 true | jq -c '[.]' ;;
+      empty) echo '[[]]' ;;
+      *) cat <<'JSON'
+[[{"number":7,"title":"app outputs wrong text","labels":[{"name":"bug"},{"name":"severity:high"}],"url":"https://github.com/acme/app/issues/7","html_url":"https://github.com/acme/app/issues/7","state":"open","body":"src/app.txt should contain a fixed line. Please fix the output."}]]
 JSON
       ;;
     esac ;;
@@ -25,10 +55,21 @@ JSON
 JSON
     ;;
   "issue edit"|"issue comment"|"issue close") mutate "$@" ;;
-  "pr create")  mutate "$@"; echo "https://github.com/acme/app/pull/12" ;;
+  "pr create")
+    mutate "$@"
+    if [ "$scenario" = "pr-create-fail" ]; then
+      echo "temporary API failure" >&2
+      exit 1
+    fi
+    echo "https://github.com/acme/app/pull/12" ;;
   "pr merge")   mutate "$@" ;;
   "pr view")    echo "false" ;;   # not merged yet -> fix:pr-open path
-  "pr list")    echo "" ;;
+  "pr list")
+    case "$*" in
+      *"length > 0"*)
+        if [ "$scenario" = "stale-open-pr" ]; then echo "true"; else echo "false"; fi ;;
+      *) echo "" ;;
+    esac ;;
   "repo view")  echo "main" ;;
   *) : ;;   # auth setup-git etc. -> no-op
 esac

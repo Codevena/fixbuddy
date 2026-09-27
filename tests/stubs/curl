@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Offline raw.githubusercontent.com double for installer integration tests.
+set -u
+output="" url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    -* ) shift ;;
+    *  ) url="$1"; shift ;;
+  esac
+done
+relative="${url#https://raw.githubusercontent.com/Codevena/fixbuddy/}"
+[ -n "$output" ] && [ "$relative" != "$url" ] || exit 22
+cp "$FIXBUDDY_INSTALL_FIXTURE/$relative" "$output" 2>/dev/null || exit 22

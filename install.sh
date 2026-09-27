@@ -8,6 +8,7 @@
 #   --prefix PATH   Install into PATH instead of the auto-detected location
 #   --ref TAG       Install the fixbuddy scripts from a specific git ref.
 #                   Default: v0.7.1.  Use --ref main for the latest commit.
+#   --with-tui      Also install the Python 3 terminal UI (requires a ref with it).
 #   -y, --yes       Skip the sudo confirmation prompt
 #   -h, --help      Show this help and exit
 #
@@ -23,6 +24,7 @@ SCRIPTS=(fixbuddy.sh fixbuddy-wizard.sh)
 PREFIX=""
 REF="$DEFAULT_REF"
 ASSUME_YES=false
+WITH_TUI=false
 
 # -------- Output helpers --------
 if [ -t 2 ]; then
@@ -46,6 +48,7 @@ Options (pass as: | bash -s -- <options>):
   --prefix PATH   Install into PATH instead of the auto-detected location
   --ref TAG       Install fixbuddy scripts from a specific git ref (default: v0.7.1;
                   use --ref main for the latest commit)
+  --with-tui      Also install fixbuddy-tui.py (Python 3; use --ref main until release)
   -y, --yes       Skip the sudo confirmation prompt
   -h, --help      Show this help and exit
 EOF
@@ -56,6 +59,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --prefix) PREFIX="${2:?--prefix requires a path}"; shift 2 ;;
     --ref)    REF="${2:?--ref requires a tag or branch name}"; shift 2 ;;
+    --with-tui) WITH_TUI=true; shift ;;
     -y|--yes) ASSUME_YES=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) err "unknown argument: $1"; usage; exit 2 ;;
@@ -63,6 +67,10 @@ while [ $# -gt 0 ]; do
 done
 
 command -v curl >/dev/null 2>&1 || die "curl is required but not installed. Install curl and re-run."
+if $WITH_TUI; then
+  command -v python3 >/dev/null 2>&1 || die "--with-tui requires Python 3."
+  SCRIPTS+=(fixbuddy-tui.py)
+fi
 
 # -------- Helpers --------
 in_path() {
@@ -125,10 +133,12 @@ fi
 TMP_DL="$(mktemp -d "${TMPDIR:-/tmp}/fixbuddy-install.XXXXXX")"
 STAGE1=""
 STAGE2=""
+STAGE3=""
 cleanup() {
   rm -rf "$TMP_DL"
   if [ -n "$STAGE1" ]; then as_root rm -f "$STAGE1" 2>/dev/null || true; fi
   if [ -n "$STAGE2" ]; then as_root rm -f "$STAGE2" 2>/dev/null || true; fi
+  if [ -n "$STAGE3" ]; then as_root rm -f "$STAGE3" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
 
@@ -140,13 +150,16 @@ for script in "${SCRIPTS[@]}"; do
   fi
   # Reject HTML error pages: the file must start with the expected shebang.
   first_line="$(head -n 1 "$TMP_DL/$script")"
-  if [ "$first_line" != "#!/usr/bin/env bash" ]; then
-    die "Downloaded $script is not a bash script (first line: '${first_line:0:60}'). Aborting."
-  fi
-  # Reject truncated / partial downloads: a cut-off script fails to parse.
-  if ! bash -n "$TMP_DL/$script" 2>/dev/null; then
-    die "Downloaded $script failed to parse — likely a truncated or corrupt download. Aborting."
-  fi
+  case "$script" in
+    *.py)
+      [ "$first_line" = "#!/usr/bin/env python3" ] || die "Downloaded $script has an unexpected shebang."
+      python3 -m py_compile "$TMP_DL/$script" 2>/dev/null || die "Downloaded $script failed Python syntax validation."
+      ;;
+    *)
+      [ "$first_line" = "#!/usr/bin/env bash" ] || die "Downloaded $script is not a bash script."
+      bash -n "$TMP_DL/$script" 2>/dev/null || die "Downloaded $script failed Bash syntax validation."
+      ;;
+  esac
 done
 
 # -------- Optional checksum verification --------
@@ -174,9 +187,11 @@ if curl -fsSL "$RAW_BASE/$REF/SHA256SUMS" -o "$TMP_DL/SHA256SUMS" 2>/dev/null; t
       *) warn "Ref '$REF' is not a release tag; the bundled SHA256SUMS may not match these scripts." ;;
     esac
   else
+    $WITH_TUI && die "--with-tui requires sha256sum or shasum to verify its checksum."
     warn "No sha256 tool (sha256sum/shasum) found — skipping checksum verification."
   fi
 else
+  $WITH_TUI && die "--with-tui requires SHA256SUMS at ref '$REF'."
   warn "No SHA256SUMS published at ref '$REF' — skipping checksum verification."
 fi
 
@@ -194,25 +209,33 @@ if [ -f "$DEST/fixbuddy.sh" ]; then
 fi
 
 [ -d "$DEST" ] || as_root mkdir -p "$DEST"
-# Stage both scripts into the destination under temp names, then swap each
-# into place with an atomic per-file rename. If staging the second file
+# Stage all selected scripts into the destination under temp names, then swap each
+# into place with an atomic per-file rename. If staging a later file
 # fails, the first is still only a temp file, so the destination is never
 # left with a half-applied install.
 STAGE1="$DEST/.fixbuddy.sh.install.$$"
 STAGE2="$DEST/.fixbuddy-wizard.sh.install.$$"
 as_root cp "$TMP_DL/fixbuddy.sh" "$STAGE1"
 as_root cp "$TMP_DL/fixbuddy-wizard.sh" "$STAGE2"
+if $WITH_TUI; then
+  STAGE3="$DEST/.fixbuddy-tui.py.install.$$"
+  as_root cp "$TMP_DL/fixbuddy-tui.py" "$STAGE3"
+fi
 as_root chmod +x "$STAGE1" "$STAGE2"
+[ -z "$STAGE3" ] || as_root chmod +x "$STAGE3"
 as_root mv "$STAGE1" "$DEST/fixbuddy.sh"
 as_root mv "$STAGE2" "$DEST/fixbuddy-wizard.sh"
+[ -z "$STAGE3" ] || as_root mv "$STAGE3" "$DEST/fixbuddy-tui.py"
 STAGE1=""
 STAGE2=""
+STAGE3=""
 
 ok "Installed fixbuddy $new_version to $DEST"
 
 # -------- PATH hint --------
 if in_path "$DEST"; then
   printf '\nRun:  fixbuddy-wizard.sh\n' >&2
+  if $WITH_TUI; then printf '      fixbuddy-tui.py\n' >&2; fi
 else
   warn "$DEST is not in your PATH."
   rc_file="$HOME/.profile"
@@ -225,4 +248,5 @@ else
   printf '    echo '\''export PATH="%s:$PATH"'\'' >> %s\n' "$DEST" "$rc_file" >&2
   printf '  Then restart your shell. Until then, run it directly:\n' >&2
   printf '    %s/fixbuddy-wizard.sh\n' "$DEST" >&2
+  if $WITH_TUI; then printf '    %s/fixbuddy-tui.py\n' "$DEST" >&2; fi
 fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy v0.7.1 — two-agent pipeline for autonomous issue fixing
+# fixbuddy v0.8.0-dev — two-agent issue fixing with independent review
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -39,10 +39,11 @@
 #   --agent-timeout <secs>    Wall-clock timeout per agent invocation (default: 1200 = 20min)
 #   --crash-abort <n>         Abort batch after N consecutive agent crashes (default: 3)
 #   --base <branch>           Base branch (default: auto-detect main/master)
-#   --auto-merge              Enable auto-merge (default; overrides config auto_merge=false)
+#   --auto-merge              Enable auto-merge (overrides config auto_merge=false)
 #   --no-auto-merge           Create PR but don't enable auto-merge
 #   --skip-label <lbl>        Skip issues with this label (default: fix:applied)
 #   --dry-run                 List targets only — fully read-only (no labels, no edits)
+#   --json                    With --dry-run: machine-readable queue and settings
 #   --yes, -y                 Skip confirmation
 #
 # Config files (key = value, parsed without eval; CLI flags override):
@@ -51,7 +52,7 @@
 #   filter), and a config-provided label/check/notify cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.7.1"
+VERSION="0.8.0-dev"
 
 # -------- Defaults --------
 REPO=""
@@ -69,8 +70,9 @@ AGENT_TIMEOUT=1200  # 20 min per agent invocation
 CRASH_ABORT_THRESHOLD=3
 BASE_BRANCH=""
 SKIP_LABEL="fix:applied"
-AUTO_MERGE=true
+AUTO_MERGE=false
 DRY_RUN=false
+PREVIEW_JSON=false
 AUTO_YES=false
 
 # Runtime crash counter (bumped by handle_agent_crash, reset on successful agent output)
@@ -177,8 +179,9 @@ while [ $# -gt 0 ]; do
     --no-auto-merge) AUTO_MERGE=false; shift ;;
     --skip-label) SKIP_LABEL="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
+    --json) PREVIEW_JSON=true; shift ;;
     -y|--yes) AUTO_YES=true; shift ;;
-    -h|--help) sed -n '2,51p' "$0"; exit 0 ;;
+    -h|--help) awk 'NR == 1 { next } /^set -uo pipefail$/ { exit } { print }' "$0"; exit 0 ;;
     --version) echo "fixbuddy $VERSION"; exit 0 ;;
     *) err "Unknown arg: $1"; exit 2 ;;
   esac
@@ -187,6 +190,10 @@ done
 # -------- Validation --------
 [ -n "$REPO" ]    || { err "--repo is required"; exit 2; }
 [ -n "$PROJECT" ] || { err "--project is required"; exit 2; }
+if $PREVIEW_JSON && ! $DRY_RUN; then
+  err "--json is available only with --dry-run"
+  exit 2
+fi
 [ -d "$PROJECT" ] || { err "project path does not exist: $PROJECT"; exit 2; }
 [ -d "$PROJECT/.git" ] || { err "not a git repo: $PROJECT"; exit 2; }
 
@@ -277,6 +284,18 @@ fi
 # Label creation and the fix:pr-open unstick scan both MUTATE the repo, so they are
 # skipped under --dry-run to keep a preview fully read-only. The issue fetch further
 # below is read-only and runs unconditionally.
+fetch_open_issues() {
+  local pages
+  # gh issue list's --limit is a cap, not a cursor. REST pagination covers the
+  # complete queue and the fix:pr-open reconciliation scan. REST's issues
+  # endpoint also returns PRs, which must be excluded explicitly.
+  pages=$(gh api --paginate --slurp "repos/$REPO/issues?state=open&per_page=100") || return 1
+  jq -c '[.[][] | select(.pull_request == null) | {
+    number, title, labels: (.labels | map({name})),
+    url: .html_url, body: (.body // ""), state: (.state | ascii_upcase)
+  }]' <<<"$pages"
+}
+
 if ! $DRY_RUN; then
 
 # -------- Ensure control labels exist --------
@@ -298,8 +317,11 @@ done
 # underlying fix/issue-N PR is no longer open.
 info "Scanning for stuck fix:pr-open issues..."
 unstuck=0
-stuck_list=$(gh issue list --repo "$REPO" --state open --label "fix:pr-open" \
-  --json number --limit 200 2>/dev/null || echo '[]')
+if ! scan_issues=$(fetch_open_issues); then
+  err "failed to fetch the open issue list for fix:pr-open reconciliation"
+  exit 1
+fi
+stuck_list=$(jq -c '[.[] | select(.labels | map(.name) | index("fix:pr-open")) | {number}]' <<<"$scan_issues")
 while IFS= read -r stuck_issue; do
   [ -z "$stuck_issue" ] && continue
   stuck_num=$(echo "$stuck_issue" | jq -r '.number // empty')
@@ -359,12 +381,9 @@ if [ "${#ISSUES[@]}" -gt 0 ]; then
     issues_json=$(jq -c --argjson cur "$iv" '. + [$cur]' <<<"$issues_json")
   done
 else
-  search_args=(--repo "$REPO" --state open --json "number,title,labels,url,body" --limit 200)
-  for l in "${LABELS[@]+"${LABELS[@]}"}"; do search_args+=(--label "$l"); done
-  [ -n "$SEVERITY" ] && search_args+=(--label "severity:$SEVERITY")
   info "Fetching issues from $REPO..."
-  if ! issues_json=$(gh issue list "${search_args[@]}" 2>&1); then
-    err "gh issue list failed: $issues_json"
+  if ! issues_json=$(fetch_open_issues); then
+    err "failed to fetch the open issue list from $REPO"
     exit 1
   fi
 fi
@@ -390,7 +409,7 @@ case "$target_count" in
   ''|*[!0-9]*) err "jq filter produced unexpected target_count='$target_count'"; exit 1 ;;
 esac
 
-info "Found $total_issues matching; $target_count actionable after filters"
+info "Found $total_issues open issues; $target_count actionable after filters"
 
 # In targeted mode, warn about requested issues that were fetched (open) but filtered out
 # (already completed, or excluded by a dedup/label filter), so a skip is never silent.
@@ -404,6 +423,18 @@ if [ "${#ISSUES[@]}" -gt 0 ]; then
       *" $inum "*) warn "issue #$inum is open but not actionable (already completed or excluded by a label/dedup filter) — skipping" ;;
     esac
   done
+fi
+
+if $DRY_RUN && $PREVIEW_JSON; then
+  jq -c --arg repo "$REPO" --arg project "$PROJECT" --arg base "$BASE_BRANCH" \
+    --arg fix "$FIX_AGENT" --arg reviewer "$REVIEW_AGENT" --arg max "$MAX" \
+    --argjson autoMerge "$AUTO_MERGE" '{
+      repo: $repo, project: $project, baseBranch: $base,
+      fixAgent: $fix, reviewAgent: $reviewer, autoMerge: $autoMerge,
+      max: (if $max == "" then null else ($max | tonumber) end),
+      issues: .
+    }' <<<"$filtered"
+  exit $?
 fi
 
 [ "$target_count" = "0" ] && { warn "No issues to process."; exit 0; }
@@ -448,6 +479,9 @@ fi
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 log_root="$HOME/.fixbuddy/runs/$run_id"
 mkdir -p "$log_root"
+if [ -n "${FIXBUDDY_LOG_DIR_FILE:-}" ]; then
+  printf '%s\n' "$log_root" > "$FIXBUDDY_LOG_DIR_FILE" || exit 1
+fi
 info "Logs: $log_root"
 
 # -------- Agent runner (with wall-clock timeout watchdog) --------
@@ -462,8 +496,9 @@ run_agent() {
     echo "----- OUTPUT -----"
   } >> "$logfile"
 
-  local outfile
+  local outfile timeout_file
   outfile=$(mktemp)
+  timeout_file=$(mktemp)
 
   # agy (Antigravity CLI) has no read-only mode; verify/review add --sandbox
   # (terminal restrictions) as defense in depth. --add-dir grants workspace access
@@ -492,19 +527,23 @@ run_agent() {
   # Record the PID in the shared file so the parent's interrupt trap can reach this agent.
   [ -n "$AGENT_PIDFILE" ] && printf '%s\n' "$agent_pid" > "$AGENT_PIDFILE"
 
-  # Watchdog — polls every 10s, kills process group on timeout
+  # Watchdog — poll in at most 10s steps, but never sleep past the deadline.
   (
     # `local` is a no-op inside a plain subshell, so use a regular assignment.
     waited=0
     while [ "$waited" -lt "$AGENT_TIMEOUT" ]; do
-      sleep 10
-      waited=$((waited+10))
+      remaining=$((AGENT_TIMEOUT-waited))
+      interval=10
+      [ "$remaining" -lt "$interval" ] && interval="$remaining"
+      sleep "$interval"
+      waited=$((waited+interval))
       kill -0 "$agent_pid" 2>/dev/null || exit 0
     done
-    # Write marker BEFORE sending signals so the rc-classification grep
-    # reliably sees it even if the agent exits immediately on TERM.
-    echo "" >> "$outfile"
-    echo "[fixbuddy-watchdog] agent PID $agent_pid killed after ${AGENT_TIMEOUT}s wall-clock timeout" >> "$outfile"
+    # A separate marker avoids racing the agent's stdout descriptor: the
+    # agent can still write after its child receives TERM and overwrite bytes
+    # appended to outfile. The parent appends the marker after the agent exits.
+    printf '[fixbuddy-watchdog] agent PID %s killed after %ss wall-clock timeout\n' \
+      "$agent_pid" "$AGENT_TIMEOUT" > "$timeout_file"
     pkill -TERM -P "$agent_pid" 2>/dev/null
     kill -TERM "$agent_pid" 2>/dev/null
     sleep 5
@@ -517,10 +556,11 @@ run_agent() {
   wait "$agent_pid" 2>/dev/null
   local rc=$?
 
-  # Detect timeout by watchdog marker
-  if grep -q "^\[fixbuddy-watchdog\]" "$outfile" 2>/dev/null; then
+  if [ -s "$timeout_file" ]; then
     rc=124
+    cat "$timeout_file" >> "$outfile"
   fi
+  rm -f "$timeout_file"
 
   # agy exits 0 (!) when its own --print-timeout fires, printing this line
   # instead of a DONE marker. Reclassify as timeout so the issue is labeled
@@ -533,14 +573,15 @@ run_agent() {
     rc=124
   fi
 
-  # Detect agent crash — nonzero exit without any DONE-* marker.
+  # A nonzero CLI exit is a crash even if the output contains a DONE marker:
+  # a reviewer that printed approval and then failed must never authorize push.
   # Covers codex usage-limit (rc=1 + "You've hit your usage limit"), MCP transport
   # errors, and any other hard exit that prevents the agent from completing its task.
   # Distinct rc=125 lets the pipeline mark the issue fix:blocked (not fix:rejected)
   # so it re-enters the queue automatically on the next run.
-  if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && ! grep -qE '^DONE-' "$outfile" 2>/dev/null; then
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
     echo "" >> "$outfile"
-    echo "[fixbuddy-crash] agent exited rc=$rc with no DONE marker (likely usage-limit or transport error)" >> "$outfile"
+    echo "[fixbuddy-crash] agent exited rc=$rc (output markers cannot override a failed CLI)" >> "$outfile"
     rc=125
   fi
 
@@ -561,6 +602,21 @@ run_agent() {
 # -------- Crash handling helpers --------
 is_crash() { [ "$1" -eq 124 ] || [ "$1" -eq 125 ]; }
 
+# A review has exactly one DONE line, and it must be the final nonblank line.
+# Ambiguous or prefixed approvals fail closed into the reject/retry path.
+review_verdict() {
+  awk '
+    NF { last=$0 }
+    /^DONE-/ { count++ }
+    END {
+      if (count != 1) exit 1
+      if (last == "DONE-APPROVED" || last ~ /^DONE-REJECTED:[[:space:]]*[^[:space:]]/) {
+        print last
+      } else exit 1
+    }
+  ' <<<"$1"
+}
+
 # Verify is contractually read-only, but no agent CLI enforces that (agy's
 # --sandbox still allows workspace writes; claude/codex/opencode run with
 # permission checks skipped). The tree was clean at startup, so anything dirty
@@ -568,29 +624,75 @@ is_crash() { [ "$1" -eq 124 ] || [ "$1" -eq 125 ]; }
 # outcome (proceed, false-positive, blocked, missing marker, crash) so no
 # return path leaves residue in the operator checkout.
 #
-# Args: issue_num, pre-verify base-ref commit (may be empty)
+# Args: issue_num, pre-verify branch, HEAD and base-ref commit.
 cleanup_verify_residue() {
-  local num="$1" pre_base="$2"
+  local num="$1" pre_branch="$2" pre_head="$3" pre_base="$4"
+  local observed_branch ref_changed=false
+  observed_branch=$(cd "$PROJECT" && git symbolic-ref --quiet --short HEAD 2>/dev/null) || observed_branch="DETACHED"
   if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
     warn "[#$num] verify stage left worktree changes — stashing residue"
-    (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-verify-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || true
+    (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-verify-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || return 2
   fi
-  # Pin the base ref back if the verify stage committed on it (a commit leaves
-  # the worktree clean, so the stash above cannot catch it). Runs AFTER the
-  # stash so a reset never touches uncommitted files; the discarded commits
-  # stay recoverable via the reflog.
-  if [ -n "$pre_base" ] \
-     && [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)" != "$pre_base" ]; then
-    warn "[#$num] verify stage created commits on $BASE_BRANCH — resetting to pre-verify state"
-    (
-      cd "$PROJECT" || exit 0
-      if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BASE_BRANCH" ]; then
-        git reset --hard "$pre_base" >/dev/null 2>&1
-      else
-        git branch -f "$BASE_BRANCH" "$pre_base" >/dev/null 2>&1
-      fi
-    ) || true
+  # Verify commits remain recoverable in the reflog, but cannot contaminate
+  # either the base or the operator's original branch.
+  if [ -n "$pre_base" ] && [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)" != "$pre_base" ]; then
+    ref_changed=true
+    warn "[#$num] verify stage moved $BASE_BRANCH — restoring pre-verify ref"
+    restore_local_ref "$BASE_BRANCH" "$pre_base" || return 2
   fi
+  if [ "$pre_branch" != "DETACHED" ]; then
+    if [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$pre_branch" 2>/dev/null)" != "$pre_head" ]; then
+      ref_changed=true
+      warn "[#$num] verify stage moved $pre_branch — restoring pre-verify ref"
+      restore_local_ref "$pre_branch" "$pre_head" || return 2
+    fi
+    (cd "$PROJECT" && git checkout "$pre_branch" >/dev/null 2>&1) || return 2
+  else
+    (cd "$PROJECT" && git checkout --detach "$pre_head" >/dev/null 2>&1) || return 2
+  fi
+  [ -z "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ] || return 2
+  if [ "$observed_branch" != "$pre_branch" ] || $ref_changed; then
+    warn "[#$num] verify agent changed branch/ref state ($pre_branch → $observed_branch)"
+    return 1
+  fi
+  return 0
+}
+
+# Call only after agent residue has been stashed. A moved ref is reset to a
+# captured SHA; Git's reflog retains the agent commit for manual recovery.
+restore_local_ref() {
+  local name="$1" sha="$2" current
+  current=$(cd "$PROJECT" && git symbolic-ref --quiet --short HEAD 2>/dev/null) || current=""
+  if [ "$current" = "$name" ]; then
+    (cd "$PROJECT" && git reset --hard "$sha" >/dev/null 2>&1)
+  else
+    (cd "$PROJECT" && git branch -f "$name" "$sha" >/dev/null 2>&1)
+  fi
+}
+
+# 0: expected branch and base; 1: unexpected state safely restored; 2: local
+# recovery failed. A caller must block the issue on 1 and stop the batch on 2.
+guard_agent_state() {
+  local num="$1" stage="$2" branch="$3" base_sha="$4" before_tip="$5"
+  local current base_now branch_now
+  current=$(cd "$PROJECT" && git symbolic-ref --quiet --short HEAD 2>/dev/null) || current="DETACHED"
+  base_now=$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null) || base_now=""
+  branch_now=$(cd "$PROJECT" && git rev-parse "refs/heads/$branch" 2>/dev/null) || branch_now=""
+  if [ "$current" = "$branch" ] && [ "$base_now" = "$base_sha" ] \
+     && [ -n "$branch_now" ] \
+     && (cd "$PROJECT" && git merge-base --is-ancestor "$base_sha" "$branch_now"); then
+    return 0
+  fi
+  warn "[#$num] $stage agent changed branch/base state; blocking before review or push"
+  if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
+    (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-$stage-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || return 2
+  fi
+  [ "$base_now" = "$base_sha" ] || restore_local_ref "$BASE_BRANCH" "$base_sha" || return 2
+  if [ -z "$branch_now" ]; then
+    (cd "$PROJECT" && git branch "$branch" "$before_tip" >/dev/null 2>&1) || return 2
+  fi
+  (cd "$PROJECT" && git checkout "$branch" >/dev/null 2>&1 && git reset --hard "$before_tip" >/dev/null 2>&1) || return 2
+  return 1
 }
 
 cleanup_branch() {
@@ -949,6 +1051,27 @@ blocked=0
 rejected=0
 aborted=false
 
+block_state_violation() {
+  local num="$1" stage="$2" branch="$3"
+  err "[#$num] $stage changed the expected branch/base state — no PR will be pushed"
+  gh issue edit "$num" --repo "$REPO" --add-label "fix:needs-human" >/dev/null 2>&1 || true
+  gh issue comment "$num" --repo "$REPO" --body "**fixbuddy → BLOCKED**: the $stage stage changed the active branch or base ref. Local agent changes were restored or stashed; inspect the run log and Git reflog before retrying.
+
+The \`fix:needs-human\` label prevents automatic retry." >/dev/null 2>&1 || true
+  [ -n "$branch" ] && cleanup_branch "$num" "$branch" "branch-state"
+  blocked=$((blocked+1))
+}
+
+sync_local_base() {
+  (
+    cd "$PROJECT" || exit 1
+    git fetch --quiet origin "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH" || exit 1
+    git checkout --quiet "$BASE_BRANCH" || exit 1
+    git merge --ff-only --quiet "refs/remotes/origin/$BASE_BRANCH" || exit 1
+    [ "$(git rev-parse "refs/heads/$BASE_BRANCH")" = "$(git rev-parse "refs/remotes/origin/$BASE_BRANCH")" ]
+  )
+}
+
 process_issue() {
   local num="$1" title="$2" body="$3"
   local branch="fix/issue-$num"
@@ -964,19 +1087,40 @@ process_issue() {
 
   hdr "Issue #$num: $title"
 
+  # Verification must inspect the fetched base, not a stale local checkout or
+  # an unrelated feature branch. A sync failure is a deterministic blocker.
+  if ! sync_local_base >> "$issue_log" 2>&1; then
+    err "[#$num] could not fetch and fast-forward the base before verify"
+    gh issue edit "$num" --repo "$REPO" --add-label "fix:needs-human" >/dev/null 2>&1 || true
+    gh issue comment "$num" --repo "$REPO" --body "**fixbuddy → BLOCKED**: the local base could not be synchronized with \`origin/$BASE_BRANCH\` before verification. Inspect the checkout and remote before retrying." >/dev/null 2>&1 || true
+    blocked=$((blocked+1))
+    return 0
+  fi
+
   # ---- Stage 1: VERIFY ----
   info "[#$num] VERIFY"
   # Capture the base ref before verify: a verify agent that COMMITS leaves a
   # clean worktree (the residue stash below cannot catch it), and branch setup
   # would build fix/issue-N on top of that commit and push it.
-  local out rc pre_verify_base
+  local out rc pre_verify_base pre_verify_branch pre_verify_head cleanup_rc
   pre_verify_base=$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)
+  pre_verify_branch=$(cd "$PROJECT" && git symbolic-ref --quiet --short HEAD 2>/dev/null) || pre_verify_branch="DETACHED"
+  pre_verify_head=$(cd "$PROJECT" && git rev-parse HEAD 2>/dev/null)
   out=$(run_agent "$FIX_AGENT" "$(verify_prompt "$num" "$title" "$body")" "$issue_log" verify)
   rc=$?
 
   # Runs before any outcome handling so every return path (crash included)
   # leaves the operator checkout clean.
-  cleanup_verify_residue "$num" "$pre_verify_base"
+  cleanup_rc=0
+  cleanup_verify_residue "$num" "$pre_verify_branch" "$pre_verify_head" "$pre_verify_base" || cleanup_rc=$?
+  if [ "$cleanup_rc" -eq 2 ]; then
+    err "[#$num] could not safely restore the checkout after verify — stopping batch"
+    exit 1
+  fi
+  if [ "$cleanup_rc" -eq 1 ]; then
+    block_state_violation "$num" verify ""
+    return 0
+  fi
 
   if is_crash "$rc"; then
     handle_agent_crash "$num" "verify" "$rc" ""
@@ -1025,17 +1169,14 @@ The \`fix:needs-human\` label has been applied. This issue requires human attent
     # `clean -fd` here — that would wipe user WIP. If the worktree is dirty and blocks
     # the checkout, abort this issue cleanly instead of letting the fix agent run on
     # the wrong branch. `handle_agent_crash` stashes its cleanup instead of destroying.
-    if ! (
-      cd "$PROJECT"
-      git fetch origin "$BASE_BRANCH" >/dev/null 2>&1 || true
-      git checkout "$BASE_BRANCH" >/dev/null 2>&1 || exit 1
-      git pull --ff-only origin "$BASE_BRANCH" >/dev/null 2>&1 || true
+    if ! sync_local_base >> "$issue_log" 2>&1 || ! (
+      cd "$PROJECT" || exit 1
       git branch -D "$branch" >/dev/null 2>&1 || true
-      git checkout -b "$branch" >/dev/null 2>&1 || exit 1
+      git checkout -b "$branch" "refs/remotes/origin/$BASE_BRANCH" >/dev/null 2>&1
     ); then
-      err "[#$num] failed to create fix branch '$branch' — skipping issue"
+      err "[#$num] failed to fetch, fast-forward or create fix branch '$branch' — skipping issue"
       gh issue edit "$num" --repo "$REPO" --add-label "fix:needs-human" >/dev/null 2>&1 || true
-      gh issue comment "$num" --repo "$REPO" --body "**fixbuddy → BLOCKED**: could not create branch \`$branch\` from \`$BASE_BRANCH\` (git checkout failed, likely dirty worktree). Clean or commit your local changes in \`$PROJECT\` and retry. Anything fixbuddy stashed previously can be recovered via \`git stash list\`.
+      gh issue comment "$num" --repo "$REPO" --body "**fixbuddy → BLOCKED**: could not fetch or fast-forward \`$BASE_BRANCH\` or create branch \`$branch\` from \`origin/$BASE_BRANCH\`. Inspect the remote and local checkout before retrying. Anything fixbuddy stashed previously can be recovered via \`git stash list\`.
 
 The \`fix:needs-human\` label has been applied. This issue will not be retried automatically." >/dev/null 2>&1 || true
       blocked=$((blocked+1))
@@ -1043,9 +1184,24 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
     fi
     CURRENT_BRANCH="$branch"   # branch now exists — interrupt trap may clean it up
 
+    local base_sha before_fix_tip guard_rc
+    base_sha=$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH")
+    before_fix_tip=$(cd "$PROJECT" && git rev-parse "refs/heads/$branch")
+
     info "[#$num] FIX attempt $attempt/$((MAX_RETRIES+1))"
     out=$(run_agent "$FIX_AGENT" "$(fix_prompt "$num" "$title" "$body" "$feedback")" "$issue_log" fix)
     rc=$?
+
+    guard_rc=0
+    guard_agent_state "$num" fix "$branch" "$base_sha" "$before_fix_tip" || guard_rc=$?
+    if [ "$guard_rc" -eq 2 ]; then
+      err "[#$num] could not safely restore checkout after fix — stopping batch"
+      exit 1
+    fi
+    if [ "$guard_rc" -eq 1 ]; then
+      block_state_violation "$num" fix "$branch"
+      return 0
+    fi
 
     if is_crash "$rc"; then
       handle_agent_crash "$num" "fix" "$rc" "$branch"
@@ -1103,6 +1259,16 @@ $check_out"
       else
         ok "[#$num] checks passed"
       fi
+      guard_rc=0
+      guard_agent_state "$num" check "$branch" "$base_sha" "$before_fix_tip" || guard_rc=$?
+      if [ "$guard_rc" -eq 2 ]; then
+        err "[#$num] could not safely restore checkout after checks — stopping batch"
+        exit 1
+      fi
+      if [ "$guard_rc" -eq 1 ]; then
+        block_state_violation "$num" check "$branch"
+        return 0
+      fi
     fi
 
     if ! $skip_review; then
@@ -1143,9 +1309,29 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
     out=$(run_agent "$REVIEW_AGENT" "$(review_prompt "$num" "$title" "$body" "$diff")" "$issue_log" review)
     rc=$?
 
+    guard_rc=0
+    guard_agent_state "$num" review "$branch" "$base_sha" "$review_head" || guard_rc=$?
+    if [ "$guard_rc" -eq 2 ]; then
+      err "[#$num] could not safely restore checkout after review — stopping batch"
+      exit 1
+    fi
+    if [ "$guard_rc" -eq 1 ]; then
+      block_state_violation "$num" review "$branch"
+      return 0
+    fi
+
     if [ -n "$review_head" ] && [ "$(cd "$PROJECT" && git rev-parse HEAD)" != "$review_head" ]; then
       warn "[#$num] review stage created commits — resetting branch to the reviewed commit"
-      (cd "$PROJECT" && git reset --hard "$review_head") >/dev/null 2>&1 || true
+      if [ -n "$(cd "$PROJECT" && git status --porcelain 2>/dev/null)" ]; then
+        (cd "$PROJECT" && git stash push --include-untracked -m "fixbuddy-review-residue-$num-$(ts)" --quiet) >/dev/null 2>&1 || {
+          err "[#$num] could not preserve reviewer residue before reset — stopping batch"
+          exit 1
+        }
+      fi
+      (cd "$PROJECT" && git reset --hard "$review_head") >/dev/null 2>&1 || {
+        err "[#$num] could not restore the reviewed commit — stopping batch"
+        exit 1
+      }
     fi
 
     # Reviewer worktree residue (the tree was clean or stashed before review,
@@ -1179,32 +1365,18 @@ The \`fix:needs-human\` label has been applied. This issue will not be retried a
     fi
     CONSECUTIVE_CRASHES=0
 
-    if grep -qE '^DONE-APPROVED' <<<"$out"; then
+    local verdict=""
+    verdict=$(review_verdict "$out") || verdict=""
+    if [ "$verdict" = "DONE-APPROVED" ]; then
       ok "[#$num] APPROVED"
       approved=true
       break
     fi
 
-    # REJECTED: capture reason and retry if we have budget
-    feedback=$(sed -n '/^DONE-REJECTED/,$p' <<<"$out")
-
-    # Robustness fallback: for very large outputs, the $out variable can be
-    # mangled/truncated. Re-parse the last agent block in the logfile as a
-    # secondary source of truth.
-    if [ -z "$feedback" ]; then
-      local last_block
-      last_block=$(awk '/^===== RUN_AGENT: /{buf=""} {buf=buf$0"\n"} /^===== END /{last=buf; buf=""} END{printf "%s", last}' "$issue_log")
-      if grep -qE '^DONE-APPROVED$' <<<"$last_block"; then
-        ok "[#$num] APPROVED (recovered from log)"
-        approved=true
-        break
-      fi
-      feedback=$(sed -n '/^DONE-REJECTED/,$p' <<<"$last_block")
-    fi
-    # Reviewer produced no recognizable verdict at all — surface a useful placeholder
-    # so the warn, GitHub comment, and the next fix attempt's feedback aren't blank.
-    if [ -z "$feedback" ]; then
-      feedback="DONE-REJECTED: (reviewer produced no DONE-APPROVED or DONE-REJECTED marker — inspect $issue_log)"
+    if [[ "$verdict" == DONE-REJECTED:* ]]; then
+      feedback="$verdict"
+    else
+      feedback="DONE-REJECTED: (reviewer did not end with one unambiguous verdict — inspect $issue_log)"
     fi
     fi  # end: skip review when checks already failed this attempt
 
@@ -1231,11 +1403,71 @@ Full logs: \`$issue_log\` on the machine where fixbuddy ran." >/dev/null 2>&1 ||
 
   $approved || return 0
 
+  # Nothing may change the exact reviewed commit or base between approval and
+  # the remote write, including a late-running child of an agent process.
+  if [ "$(cd "$PROJECT" && git symbolic-ref --quiet --short HEAD 2>/dev/null)" != "$branch" ] \
+     || [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$BASE_BRANCH" 2>/dev/null)" != "$base_sha" ] \
+     || [ "$(cd "$PROJECT" && git rev-parse "refs/heads/$branch" 2>/dev/null)" != "$review_head" ]; then
+    block_state_violation "$num" post-review "$branch"
+    return 0
+  fi
+
   # ---- Stage 4: PUSH + PR + optional auto-merge ----
-  info "[#$num] PUSH $branch"
-  if ! ( cd "$PROJECT" && git push -u origin "$branch" ) >> "$issue_log" 2>&1; then
-    err "[#$num] push failed"
+  local remote_line remote_sha="" pr_open="" push_rc=0
+  if ! remote_line=$(cd "$PROJECT" && git ls-remote --heads origin "refs/heads/$branch" 2>>"$issue_log"); then
+    err "[#$num] could not inspect remote branch before push"
     gh issue edit "$num" --repo "$REPO" --add-label "fix:blocked" >/dev/null 2>&1 || true
+    cleanup_branch "$num" "$branch" "remote-check-failed"
+    blocked=$((blocked+1))
+    return 0
+  fi
+  if [ -n "$remote_line" ]; then
+    remote_sha=${remote_line%%$'\t'*}
+    if [[ ! "$remote_sha" =~ ^[0-9a-f]{40,64}$ ]]; then
+      err "[#$num] remote branch returned an invalid SHA — refusing to replace it"
+      gh issue edit "$num" --repo "$REPO" --add-label "fix:needs-human" >/dev/null 2>&1 || true
+      cleanup_branch "$num" "$branch" "invalid-remote-ref"
+      blocked=$((blocked+1))
+      return 0
+    fi
+    if ! pr_open=$(gh pr list --repo "$REPO" --head "$branch" --state open --json number --jq 'length > 0' 2>>"$issue_log"); then
+      err "[#$num] could not check whether the remote branch has an open PR"
+      gh issue edit "$num" --repo "$REPO" --add-label "fix:blocked" >/dev/null 2>&1 || true
+      cleanup_branch "$num" "$branch" "remote-pr-check-failed"
+      blocked=$((blocked+1))
+      return 0
+    fi
+    if [ "$pr_open" = "true" ]; then
+      warn "[#$num] remote branch already has an open PR — leaving it unchanged"
+      gh issue edit "$num" --repo "$REPO" --add-label "fix:pr-open" >/dev/null 2>&1 || true
+      cleanup_branch "$num" "$branch" "remote-pr-open"
+      opened=$((opened+1))
+      return 0
+    fi
+    if [ "$pr_open" != "false" ]; then
+      err "[#$num] remote PR state was not a boolean — refusing to replace branch"
+      gh issue edit "$num" --repo "$REPO" --add-label "fix:needs-human" >/dev/null 2>&1 || true
+      cleanup_branch "$num" "$branch" "unknown-pr-state"
+      blocked=$((blocked+1))
+      return 0
+    fi
+    info "[#$num] replacing stale remote branch with lease pinned to $remote_sha"
+  fi
+  info "[#$num] PUSH $branch"
+  if [ -n "$remote_sha" ]; then
+    ( cd "$PROJECT" && git push "--force-with-lease=refs/heads/$branch:$remote_sha" origin "$review_head:refs/heads/$branch" ) >> "$issue_log" 2>&1 || push_rc=$?
+  else
+    ( cd "$PROJECT" && git push origin "$review_head:refs/heads/$branch" ) >> "$issue_log" 2>&1 || push_rc=$?
+  fi
+  if [ "$push_rc" -ne 0 ]; then
+    err "[#$num] push failed"
+    if [ -n "$remote_sha" ]; then
+      # A failed lease means the old branch changed after observation. Automatic
+      # retries must not turn that new branch state into the next overwrite.
+      gh issue edit "$num" --repo "$REPO" --add-label "fix:needs-human" >/dev/null 2>&1 || true
+    else
+      gh issue edit "$num" --repo "$REPO" --add-label "fix:blocked" >/dev/null 2>&1 || true
+    fi
     gh issue comment "$num" --repo "$REPO" --body "**fixbuddy → BLOCKED**: push failed for \`$branch\`. Check the run log and repository permissions, then retry." >/dev/null 2>&1 || true
     cleanup_branch "$num" "$branch" "push-failed"
     blocked=$((blocked+1))
@@ -1243,8 +1475,23 @@ Full logs: \`$issue_log\` on the machine where fixbuddy ran." >/dev/null 2>&1 ||
   fi
   CURRENT_PUSHED=true   # remote branch now exists — interrupt trap must not delete it
 
+  # A branch name can move after the last local check. The refspec above pins
+  # the source to the exact reviewed commit; read back the remote before PR.
+  local pushed_line pushed_sha
+  if ! pushed_line=$(cd "$PROJECT" && git ls-remote --heads origin "refs/heads/$branch" 2>>"$issue_log"); then
+    pushed_line=""
+  fi
+  pushed_sha=${pushed_line%%$'\t'*}
+  if [ "$pushed_sha" != "$review_head" ]; then
+    err "[#$num] remote branch does not point at the reviewed commit — no PR created"
+    gh issue edit "$num" --repo "$REPO" --add-label "fix:needs-human" >/dev/null 2>&1 || true
+    cleanup_branch "$num" "$branch" "remote-tip-mismatch"
+    blocked=$((blocked+1))
+    return 0
+  fi
+
   local commit_title
-  commit_title=$(cd "$PROJECT" && git log -1 --pretty=%s "$branch")
+  commit_title=$(cd "$PROJECT" && git log -1 --pretty=%s "$review_head")
 
   local pr_url
   pr_url=$(gh pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$branch" \
@@ -1273,7 +1520,9 @@ $pr_url
 \`\`\`
 
 Check the run log and repository permissions, then retry." >/dev/null 2>&1 || true
-    ( cd "$PROJECT" && git push origin --delete "$branch" >/dev/null 2>&1 ) || true
+    # Keep the reviewed remote branch. It may have replaced a closed PR's
+    # stale branch, and deleting it here would erase the only named recovery
+    # ref after a transient GitHub API failure.
     cleanup_branch "$num" "$branch" "pr-create-failed"
     blocked=$((blocked+1))
     return 0

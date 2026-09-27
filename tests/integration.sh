@@ -586,35 +586,48 @@ test_help_does_not_cut_off_header() {
 make_install_fixture() {
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/fixbuddy-install-itest.XXXXXX")"
   RUNLOG="$TMP/install.log"
-  mkdir -p "$TMP/source/v0.7.1" "$TMP/source/v0.8.0" "$TMP/source/main" "$TMP/bin"
+  mkdir -p "$TMP/source/v0.7.1" "$TMP/source/v0.8.0" "$TMP/source/v0.9.0" "$TMP/source/main" "$TMP/bin"
   for ref in v0.7.1 v0.8.0 main; do
     cp "$ROOT/src/core.sh" "$TMP/source/$ref/fixbuddy.sh"
     cp "$ROOT/src/wizard.sh" "$TMP/source/$ref/fixbuddy-wizard.sh"
   done
   cp "$ROOT/src/tui.py" "$TMP/source/v0.8.0/fixbuddy-tui.py"
   cp "$ROOT/src/tui.py" "$TMP/source/main/fixbuddy-tui.py"
+  cp "$ROOT/fixbuddy" "$TMP/source/v0.9.0/fixbuddy"
   cp "$ROOT/fixbuddy" "$TMP/source/main/fixbuddy"
   ( cd "$TMP/source/v0.7.1" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh > SHA256SUMS )
   ( cd "$TMP/source/v0.8.0" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py > SHA256SUMS )
+  ( cd "$TMP/source/v0.9.0" && shasum -a 256 fixbuddy > SHA256SUMS )
   ( cd "$TMP/source/main" && shasum -a 256 fixbuddy > SHA256SUMS )
   ln -s "$STUBS/curl" "$TMP/bin/curl"
 }
 
-test_installer_default_ref_stays_two_scripts() {
+test_installer_default_ref_is_one_file() {
   make_install_fixture
   FIXBUDDY_INSTALL_FIXTURE="$TMP/source" PATH="$TMP/bin:$PATH" \
     bash "$ROOT/install.sh" --prefix "$TMP/installed" > "$RUNLOG" 2>&1
   RC=$?
   [ "$RC" -eq 0 ] || fail "default installer exit code $RC"
-  [ -x "$TMP/installed/fixbuddy.sh" ] || fail "CLI not installed"
-  [ -x "$TMP/installed/fixbuddy-wizard.sh" ] || fail "wizard not installed"
+  [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed"
+  [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "default installed more than one file"
+  assert_substr "$RUNLOG" 'v0.9.0'
+}
+
+test_installer_legacy_ref_stays_two_scripts() {
+  make_install_fixture
+  FIXBUDDY_INSTALL_FIXTURE="$TMP/source" PATH="$TMP/bin:$PATH" \
+    bash "$ROOT/install.sh" --ref v0.8.0 --prefix "$TMP/installed" > "$RUNLOG" 2>&1
+  RC=$?
+  [ "$RC" -eq 0 ] || fail "legacy installer exit code $RC"
+  [ -x "$TMP/installed/fixbuddy.sh" ] || fail "legacy CLI not installed"
+  [ -x "$TMP/installed/fixbuddy-wizard.sh" ] || fail "legacy wizard not installed"
   [ ! -e "$TMP/installed/fixbuddy-tui.py" ] || fail "old tag unexpectedly installed TUI"
 }
 
 test_installer_tui_is_explicit() {
   make_install_fixture
   FIXBUDDY_INSTALL_FIXTURE="$TMP/source" PATH="$TMP/bin:$PATH" \
-    bash "$ROOT/install.sh" --with-tui --prefix "$TMP/installed" > "$RUNLOG" 2>&1
+    bash "$ROOT/install.sh" --ref v0.8.0 --with-tui --prefix "$TMP/installed" > "$RUNLOG" 2>&1
   RC=$?
   [ "$RC" -eq 0 ] || fail "TUI installer exit code $RC"
   [ -x "$TMP/installed/fixbuddy-tui.py" ] || fail "TUI not installed"
@@ -628,7 +641,7 @@ test_installer_local_is_one_file() {
   [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed"
   [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "more than one file installed"
   "$TMP/installed/fixbuddy" --version > "$RUNLOG" 2>&1
-  assert_substr "$RUNLOG" 'fixbuddy 0.9.0-dev'
+  assert_substr "$RUNLOG" 'fixbuddy 0.9.0'
 }
 
 test_installer_main_is_one_file() {
@@ -670,7 +683,8 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_json_preview_uses_core_queue test_json_preview_empty_queue
        test_wizard_autonomous_mode_is_explicit
        test_help_does_not_cut_off_header
-       test_installer_default_ref_stays_two_scripts test_installer_tui_is_explicit
+       test_installer_default_ref_is_one_file test_installer_legacy_ref_stays_two_scripts
+       test_installer_tui_is_explicit
        test_installer_local_is_one_file test_installer_main_is_one_file)
 
 # A named scenario runs alone for fast RED/GREEN cycles. With no argument the

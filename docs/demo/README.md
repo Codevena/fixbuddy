@@ -10,6 +10,8 @@ doubles**, not real services:
   `DONE-*` markers fixbuddy expects and, in the FIX stage, makes a **real** small
   code change, so the diff fixbuddy reviews and the PR it opens are genuine.
 - `bin/gh` — stands in for the GitHub CLI with canned responses.
+- `bin/git` — reports the matching GitHub origin identity while forwarding
+  commits, branch operations and pushes to real Git and the local bare repo.
 
 Everything else is the **real** fixbuddy pipeline: branch creation, the local
 commit, the `git diff`, `git push` (to a local bare repo), and the

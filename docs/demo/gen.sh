@@ -13,11 +13,14 @@ rm -rf "$WORK"
 mkdir -p "$WORK/bin" "$WORK/home"
 
 # Runtime bin: stub agents + stub gh + fixbuddy, all on PATH.
-chmod +x "$DEMO_DIR/bin/agent" "$DEMO_DIR/bin/gh"
+DEMO_REAL_GIT="$(command -v git)"
+export DEMO_REAL_GIT
+chmod +x "$DEMO_DIR/bin/agent" "$DEMO_DIR/bin/gh" "$DEMO_DIR/bin/git"
 ln -sf "$DEMO_DIR/bin/agent"   "$WORK/bin/claude"
 ln -sf "$DEMO_DIR/bin/agent"   "$WORK/bin/codex"
 ln -sf "$DEMO_DIR/bin/gh"      "$WORK/bin/gh"
-ln -sf "$REPO_ROOT/fixbuddy.sh" "$WORK/bin/fixbuddy"
+ln -sf "$DEMO_DIR/bin/git"     "$WORK/bin/git"
+ln -sf "$REPO_ROOT/fixbuddy"  "$WORK/bin/fixbuddy"
 
 # Playground repo with a real bug and a real origin (so `git push` genuinely works).
 git init -q --bare "$WORK/origin.git"
@@ -36,8 +39,25 @@ git clone -q "$WORK/origin.git" "$WORK/playground" 2>/dev/null
 
 export PATH="$WORK/bin:$PATH"
 export DEMO_PROJECT="$WORK/playground"
+export DEMO_GH_LOG="$WORK/gh-actions.log"
 export HOME="$WORK/home"     # isolate fixbuddy run logs
 
 cd "$REPO_ROOT"
-vhs "$DEMO_DIR/demo.tape"
+gif="$REPO_ROOT/docs/demo.gif"
+backup="$WORK/previous-demo.gif"
+if [ -f "$gif" ]; then mv "$gif" "$backup"; fi
+if ! vhs "$DEMO_DIR/demo.tape" -o "$gif"; then
+  [ ! -f "$backup" ] || mv "$backup" "$gif"
+  exit 1
+fi
+if [ ! -s "$gif" ]; then
+  [ ! -f "$backup" ] || mv "$backup" "$gif"
+  echo "VHS did not write $gif" >&2
+  exit 1
+fi
+if ! grep -qx 'pr create' "$DEMO_GH_LOG" || ! grep -qx 'pr merge' "$DEMO_GH_LOG"; then
+  [ ! -f "$backup" ] || mv "$backup" "$gif"
+  echo "demo did not complete the PR and auto-merge steps" >&2
+  exit 1
+fi
 echo "Wrote $REPO_ROOT/docs/demo.gif"

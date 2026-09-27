@@ -13,7 +13,7 @@ Set Theme "Dracula"
 Set TypingSpeed 35ms
 
 Sleep 600ms
-Type "fixbuddy --repo acme/calc --project /tmp/fixbuddy-demo/playground --yes"
+Type "fixbuddy --repo acme/calc --project /tmp/fixbuddy-demo/playground --yes --auto-merge"
 Sleep 500ms
 Enter
-Sleep 9s
+Sleep 25s

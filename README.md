@@ -54,20 +54,19 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 
 ## Quick Start
 
-The single-file version is currently a development candidate. From this checkout,
-install the bundled command locally (macOS or Linux, including WSL2):
+Install the single-file release on macOS or Linux (including WSL2):
 
 ```bash
-bash install.sh --local --prefix "$HOME/.local/bin"
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.0/install.sh | bash
 gh auth login
 fixbuddy
 ```
 
-Until this candidate is published, the public `main` branch and pinned `v0.8.0`
-installer still contain the older multi-file version. From the development
-checkout, `./fixbuddy` works without installation. The installer copies only
-`fixbuddy` and verifies its entry in `SHA256SUMS`. Once a single-file ref is
-published, `bash install.sh --ref <published-ref>` downloads that bundle.
+The pinned installer downloads only `fixbuddy`, verifies its `SHA256SUMS`
+entry, and puts it in `~/.local/bin` (or `/usr/local/bin`). From a source
+checkout, run `./fixbuddy` directly or install it with
+`bash install.sh --local --prefix "$HOME/.local/bin"`. The older v0.8.0 scripts
+remain available when you explicitly pass `--ref v0.8.0` to the installer.
 
 `fixbuddy` opens the terminal UI when run interactively. It uses your `gh`
 login to list **all repositories visible to your account**, including private

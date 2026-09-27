@@ -4,7 +4,7 @@ All notable changes to fixbuddy are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.0] - 2026-09-27
 
 ### Added
 - One `fixbuddy` executable bundles the Bash pipeline, wizard and Python 3
@@ -13,13 +13,16 @@ All notable changes to fixbuddy are documented here. The format is based on
 - The UI loads all repositories visible to the authenticated `gh` account and
   their open issues, including accessible private repositories. It excludes
   pull requests and marks repositories with failed reads as unknown.
-- `install.sh --local` installs the one-file candidate. Explicit refs newer
-  than v0.8 install the one-file distribution when published.
+- The installer downloads and verifies the one-file distribution by default;
+  `--local` installs the same bundle from a checkout. Explicit v0.8 refs keep
+  their legacy installer behavior.
 
 ### Changed
 - The demo mode was removed. The UI starts with the live read-only inventory.
 - Before a write run, the checkout's origin fetch and push URLs must match
-  the selected GitHub repository.
+  the selected GitHub repository, including after agent and check stages.
+- The UI displays unknown totals on an account-wide GitHub API failure and
+  passes the exact ordered preview issue IDs to the confirmed run.
 
 ## [0.8.0] - 2026-09-27
 
@@ -152,6 +155,7 @@ to existing flags.
 
 Predate this changelog. See the git history and the `v0.4.0` / `v0.3.2` tags.
 
+[0.9.0]: https://github.com/Codevena/fixbuddy/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Codevena/fixbuddy/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/Codevena/fixbuddy/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Codevena/fixbuddy/compare/v0.6.0...v0.7.0

@@ -2,13 +2,12 @@
 # install.sh — installer for fixbuddy (https://github.com/Codevena/fixbuddy)
 #
 # Quick install:
-#   curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.0/install.sh | bash
 #
 # Options (pass after the URL as: | bash -s -- <options>):
 #   --prefix PATH   Install into PATH instead of the auto-detected location
-#   --ref TAG       Install the fixbuddy scripts from a specific git ref.
-#                   Default: v0.8.0.  Use --ref main for the latest commit.
-#   --with-tui      Also install the Python 3 terminal UI (requires a ref with it).
+#   --ref TAG       Install from a specific git ref (default: v0.9.0).
+#   --with-tui      Legacy v0.8.0 only; the current file already includes the UI.
 #   --local         Install the single-file fixbuddy beside this installer.
 #   -y, --yes       Skip the sudo confirmation prompt
 #   -h, --help      Show this help and exit
@@ -18,9 +17,9 @@
 set -euo pipefail
 
 REPO_SLUG="Codevena/fixbuddy"
-DEFAULT_REF="v0.8.0"
+DEFAULT_REF="v0.9.0"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_SLUG}"
-SCRIPTS=(fixbuddy.sh fixbuddy-wizard.sh)
+SCRIPTS=(fixbuddy)
 
 PREFIX=""
 REF="$DEFAULT_REF"
@@ -45,13 +44,13 @@ usage() {
   cat >&2 <<'EOF'
 install.sh — installer for fixbuddy
 
-  curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.0/install.sh | bash
 
 Options (pass as: | bash -s -- <options>):
   --prefix PATH   Install into PATH instead of the auto-detected location
-  --ref TAG       Install fixbuddy scripts from a specific git ref (default: v0.8.0;
+  --ref TAG       Install fixbuddy from a specific git ref (default: v0.9.0;
                   use --ref main for the latest commit)
-  --with-tui      Also install fixbuddy-tui.py (Python 3 required to run it)
+  --with-tui      Legacy v0.8.0 only; the current file already includes the UI
   --local         Install the single-file fixbuddy beside this installer
   -y, --yes       Skip the sudo confirmation prompt
   -h, --help      Show this help and exit
@@ -77,13 +76,10 @@ if $LOCAL; then
 else
   command -v curl >/dev/null 2>&1 || die "curl is required but not installed. Install curl and re-run."
 fi
-SINGLE_FILE=false
-if $REF_SET; then
-  case "$REF" in
-    v0.7.*|v0.8.*) ;;
-    *) SINGLE_FILE=true; SCRIPTS=(fixbuddy) ;;
-  esac
-fi
+SINGLE_FILE=true
+case "$REF" in
+  v0.7.*|v0.8.*) SINGLE_FILE=false; SCRIPTS=(fixbuddy.sh fixbuddy-wizard.sh) ;;
+esac
 if $WITH_TUI; then
   $SINGLE_FILE && die "The single-file release already includes the terminal UI; omit --with-tui."
   command -v python3 >/dev/null 2>&1 || die "--with-tui requires Python 3."
@@ -239,11 +235,11 @@ if curl -fsSL "$RAW_BASE/$REF/SHA256SUMS" -o "$TMP_DL/SHA256SUMS" 2>/dev/null; t
       *) warn "Ref '$REF' is not a release tag; the bundled SHA256SUMS may not match these scripts." ;;
     esac
   else
-    { $WITH_TUI || $SINGLE_FILE; } && die "Installing the terminal UI requires sha256sum or shasum to verify its checksum."
+    { $WITH_TUI || $SINGLE_FILE; } && die "Installing FixBuddy requires sha256sum or shasum to verify its checksum."
     warn "No sha256 tool (sha256sum/shasum) found — skipping checksum verification."
   fi
 else
-  { $WITH_TUI || $SINGLE_FILE; } && die "Installing the terminal UI requires SHA256SUMS at ref '$REF'."
+  { $WITH_TUI || $SINGLE_FILE; } && die "Installing FixBuddy requires SHA256SUMS at ref '$REF'."
   warn "No SHA256SUMS published at ref '$REF' — skipping checksum verification."
 fi
 

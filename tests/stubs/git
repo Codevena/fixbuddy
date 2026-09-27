@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# The integration fixture pushes to a local bare remote. Report the GitHub
+# identity that the same repo would have in production for origin checks.
+set -u
+if [ "${1:-}" = remote ] && [ "${2:-}" = get-url ]; then
+  case " $* " in
+    *" --push "*)
+      if [ "${FIXBUDDY_TEST_SCENARIO:-}" = pushurl-mismatch ]; then
+        printf '%s\n' 'https://github.com/other/repo.git'
+      elif [ "${FIXBUDDY_TEST_SCENARIO:-}" = reviewpushurl ] \
+           && push_target=$("${FIXBUDDY_TEST_REAL_GIT:?}" config --get remote.origin.pushurl); then
+        printf '%s\n' "$push_target"
+      else
+        printf '%s\n' 'git@github.com:acme/app.git'
+      fi
+      exit 0 ;;
+    *)
+      if [ "${FIXBUDDY_TEST_SCENARIO:-}" = origin-mismatch ]; then
+        printf '%s\n' 'https://github.com/other/repo.git'
+      elif [ "${FIXBUDDY_TEST_SCENARIO:-}" = missing-origin ]; then
+        exit 2
+      else
+        printf '%s\n' 'https://github.com/acme/app.git'
+      fi
+      exit 0 ;;
+  esac
+fi
+exec "${FIXBUDDY_TEST_REAL_GIT:?}" "$@"

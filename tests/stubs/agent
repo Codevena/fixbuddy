@@ -49,10 +49,10 @@ Closes #7" )
 }
 
 case "$scenario:$stage" in
-  happy:verify|reject:verify|check:verify|fixswitch:verify|reviewswitch:verify|mixedverdict:verify|prefixverdict:verify|stale-open-pr:verify|pushrace:verify|pr-create-fail:verify)
+  happy:verify|reject:verify|check:verify|fixswitch:verify|reviewswitch:verify|reviewpushurl:verify|mixedverdict:verify|prefixverdict:verify|stale-open-pr:verify|pushrace:verify|pr-create-fail:verify)
     echo "Reproduced the problem. The issue is real."
     echo "DONE-PROCEED" ;;
-  happy:fix|reject:fix|check:fix|reviewswitch:fix|mixedverdict:fix|prefixverdict:fix|reviewexitbad:fix|reviewcommitdirty:fix|stale-open-pr:fix|freshbase:fix|pushrace:fix|pr-create-fail:fix)
+  happy:fix|reject:fix|check:fix|reviewswitch:fix|reviewpushurl:fix|mixedverdict:fix|prefixverdict:fix|reviewexitbad:fix|reviewcommitdirty:fix|stale-open-pr:fix|freshbase:fix|pushrace:fix|pr-create-fail:fix)
     do_fix_commit
     echo "DONE-FIX-APPLIED" ;;
   happy:review|stale-open-pr:review|freshbase:review|pushrace:review|pr-create-fail:review)
@@ -65,6 +65,9 @@ case "$scenario:$stage" in
   reviewswitch:review)
     ( cd "$project" && git checkout -q main && echo "rogue" >> src/app.txt \
       && git add src/app.txt && git commit -q -m "rogue review commit" )
+    echo "DONE-APPROVED" ;;
+  reviewpushurl:review)
+    ( cd "$project" && git remote set-url --push origin "$project/../wrong.git" )
     echo "DONE-APPROVED" ;;
   mixedverdict:review)
     echo "DONE-APPROVED: but checks failed"

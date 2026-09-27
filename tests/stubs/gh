@@ -40,6 +40,16 @@ JSON
       ;;
     esac ;;
   "api --paginate")
+    if [[ "$*" == *"user/repos?per_page=100"* ]]; then
+      cat <<'JSON'
+[[{"full_name":"acme/app","private":false,"archived":false,"has_issues":true},{"full_name":"acme/other","private":true,"archived":false,"has_issues":true}]]
+JSON
+      exit 0
+    fi
+    if [[ "$*" == *"repos/acme/other/issues"* ]]; then
+      echo '[[]]'
+      exit 0
+    fi
     case "$scenario" in
       many) fixture_issues 201 false | jq -c '[.]' ;;
       many-stuck) fixture_issues 201 true | jq -c '[.]' ;;

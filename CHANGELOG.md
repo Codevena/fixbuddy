@@ -4,6 +4,23 @@ All notable changes to fixbuddy are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- One `fixbuddy` executable bundles the Bash pipeline, wizard and Python 3
+  terminal UI. An interactive `fixbuddy` opens the UI; `--wizard` opens the
+  wizard; direct CLI flags and `run` retain non-interactive use.
+- The UI loads all repositories visible to the authenticated `gh` account and
+  their open issues, including accessible private repositories. It excludes
+  pull requests and marks repositories with failed reads as unknown.
+- `install.sh --local` installs the one-file candidate. Explicit refs newer
+  than v0.8 install the one-file distribution when published.
+
+### Changed
+- The demo mode was removed. The UI starts with the live read-only inventory.
+- Before a write run, the checkout's origin fetch and push URLs must match
+  the selected GitHub repository.
+
 ## [0.8.0] - 2026-09-27
 
 ### Added

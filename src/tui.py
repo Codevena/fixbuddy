@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""FixBuddy's optional terminal UI. Python 3 standard library only.
+"""FixBuddy's embedded terminal UI. Python 3 standard library only.
 
-The UI previews and launches fixbuddy.sh; the Bash pipeline remains the only
+The UI previews and launches fixbuddy; the Bash pipeline remains the only
 component that edits a checkout or calls GitHub write APIs.
 """
 
@@ -17,17 +17,19 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import unicodedata
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 SEVERITIES = ("all", "critical", "high", "medium", "low")
 AGENTS = ("claude", "codex", "opencode", "agy")
-TABS = ("QUEUE", "SETUP", "RUN")
+TABS = ("REPOS", "ISSUES", "SETUP", "RUN")
 WORDMARK = "FIX BUDDY"
 PIXEL_GLYPHS = {
     "F": ("█████", "██   ", "████ ", "██   ", "██   "),
@@ -38,6 +40,136 @@ PIXEL_GLYPHS = {
     "D": ("████ ", "██ ██", "██ ██", "██ ██", "████ "),
     "Y": ("██ ██", "██ ██", " ███ ", "  █  ", "  █  "),
 }
+REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+@dataclass
+class IssueRecord:
+    repo: str
+    number: int
+    title: str
+    labels: list[dict[str, str]]
+    url: str = ""
+    body: str = ""
+
+
+@dataclass
+class RepoRecord:
+    full_name: str
+    private: bool
+    archived: bool
+    has_issues: bool
+    status: str = "loading"  # loading, ok, disabled, error
+    issues: list[IssueRecord] = field(default_factory=list)
+    error: str = ""
+
+
+def _flatten_pages(raw: str) -> list[dict[str, Any]]:
+    pages = json.loads(raw)
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise ValueError("GitHub returned an invalid paginated response")
+    return [item for page in pages for item in page if isinstance(item, dict)]
+
+
+def parse_repository_pages(raw: str) -> list[RepoRecord]:
+    repos: list[RepoRecord] = []
+    seen: set[str] = set()
+    for item in _flatten_pages(raw):
+        name = item.get("full_name")
+        if not isinstance(name, str) or not REPO_NAME.fullmatch(name):
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        repos.append(RepoRecord(name, bool(item.get("private")),
+                                bool(item.get("archived")), bool(item.get("has_issues", True))))
+    return repos
+
+
+def parse_issue_pages(repo: str, raw: str) -> list[IssueRecord]:
+    issues: list[IssueRecord] = []
+    for item in _flatten_pages(raw):
+        number = item.get("number")
+        if item.get("pull_request") is not None or str(item.get("state", "")).lower() != "open":
+            continue
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            continue
+        raw_labels = item.get("labels") or []
+        labels = [{"name": entry["name"]} for entry in raw_labels
+                  if isinstance(entry, dict) and isinstance(entry.get("name"), str)]
+        issues.append(IssueRecord(
+            repo=repo, number=number, title=str(item.get("title") or ""),
+            labels=labels, url=str(item.get("html_url") or ""),
+            body=str(item.get("body") or ""),
+        ))
+    return issues
+
+
+def catalog_totals(repos: list[RepoRecord]) -> tuple[int, int, int]:
+    return len(repos), sum(len(repo.issues) for repo in repos if repo.status == "ok"), \
+        sum(repo.status == "error" for repo in repos)
+
+
+def github_api(endpoint: str) -> str:
+    result = subprocess.run(["gh", "api", "--paginate", "--slurp", endpoint],
+                            capture_output=True, text=True, timeout=30, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(clean_display(result.stderr.strip() or "GitHub API request failed")[:240])
+    return result.stdout
+
+
+def load_catalog(
+    api: Callable[[str], str] = github_api,
+    on_progress: Callable[[str, Any], None] | None = None,
+    max_workers: int = 6,
+) -> list[RepoRecord]:
+    """Read every accessible repo, with bounded concurrent issue requests."""
+    repos = parse_repository_pages(api("user/repos?per_page=100"))
+    if on_progress:
+        on_progress("repos", repos)
+    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, 8))) as pool:
+        futures = {}
+        for repo in repos:
+            if not repo.has_issues:
+                repo.status = "disabled"
+                if on_progress:
+                    on_progress("repo", repo)
+                continue
+            endpoint = f"repos/{repo.full_name}/issues?state=open&per_page=100"
+            futures[pool.submit(api, endpoint)] = repo
+        for future in as_completed(futures):
+            repo = futures[future]
+            try:
+                repo.issues = parse_issue_pages(repo.full_name, future.result())
+                repo.status = "ok"
+            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                repo.status = "error"
+                repo.error = clean_display(str(error))[:160]
+            if on_progress:
+                on_progress("repo", repo)
+    return repos
+
+
+def catalog_worker_main() -> int:
+    """Stream read-only GitHub inventory updates to the parent TUI."""
+    def report(kind: str, value: Any) -> None:
+        data = [asdict(repo) for repo in value] if kind == "repos" else asdict(value)
+        print(json.dumps({"type": kind, "data": data}, ensure_ascii=False), flush=True)
+    try:
+        load_catalog(on_progress=report)
+        print(json.dumps({"type": "done"}), flush=True)
+        return 0
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+        print(json.dumps({"type": "error", "message": clean_display(str(error))[:200]}), flush=True)
+        return 1
+
+
+def repo_from_event(data: dict[str, Any]) -> RepoRecord:
+    issues = [IssueRecord(**issue) for issue in data.get("issues", [])]
+    return RepoRecord(data["full_name"], bool(data["private"]), bool(data["archived"]),
+                      bool(data["has_issues"]), data["status"], issues,
+                      str(data.get("error") or ""))
 
 
 def clean_display(value: str) -> str:
@@ -160,7 +292,7 @@ def build_preview_command(script: Path, settings: Settings) -> list[str]:
 
 def build_run_command(script: Path, settings: Settings, selected: list[int]) -> list[str]:
     command = common_command(script, settings)
-    for number in sorted(set(selected)):
+    for number in dict.fromkeys(selected):
         command += ["--issue", str(number)]
     return command + ["--yes"]
 
@@ -192,41 +324,117 @@ def _wrap(text: str, width: int, limit: int) -> list[str]:
 
 
 class TerminalApp:
-    def __init__(self, script: Path, settings: Settings, demo: bool = False):
+    def __init__(self, script: Path, settings: Settings):
         self.script = script
         self.settings = settings
-        self.demo = demo
+        self.self_path = Path(os.environ.get("FIXBUDDY_SELF") or __file__).resolve()
+        self.catalog: list[RepoRecord] = []
+        self.repo_cursor = 0
+        self.issue_filter_repo: str | None = None
+        self.catalog_generation = 0
+        self.catalog_loading = False
+        self.catalog_error: str | None = None
         self.issues: list[dict[str, Any]] = []
         self.selected: set[int] = set()
-        self.preview_key: tuple[str, str, str, int | None, str, str, bool] | None = None
+        self.preview_key: tuple[Any, ...] | None = None
+        self.actionable_numbers: set[int] = set()
+        self.actionable_order: list[int] = []
+        self.actionable_count = 0
         self.cursor = 0
         self.setup_cursor = 0
         self.tab = 0
         self.dialog = ""
-        self.notice = "Read-only preview · press r to refresh"
+        self.notice = "Loading read-only GitHub inventory…"
         self.logs: list[str] = []
         self.log_scroll = 0
         self.process: subprocess.Popen[str] | None = None
         self.run_exit: int | None = None
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self.catalog_process: subprocess.Popen[str] | None = None
         self.colors: dict[str, int] = {}
-        if demo:
-            self.settings.repo = self.settings.repo or "codevena/fixbuddy"
-            self.settings.project = self.settings.project or "~/Developer/fixbuddy"
-            self.issues = [
-                {"number": 7, "title": "Guard branch and base refs after each agent", "labels": [{"name": "severity:critical"}], "body": "A branch switch must never place an unreviewed commit into a later pull request.", "url": "https://github.com/Codevena/fixbuddy/issues/7"},
-                {"number": 12, "title": "Retry closed PRs with stale remote branches", "labels": [{"name": "severity:high"}], "body": "A closed pull request may leave fix/issue-N on origin.", "url": "https://github.com/Codevena/fixbuddy/issues/12"},
-                {"number": 18, "title": "Reject contradictory review verdicts", "labels": [{"name": "severity:high"}], "body": "Only one exact final verdict may authorize a push.", "url": "https://github.com/Codevena/fixbuddy/issues/18"},
-                {"number": 23, "title": "Page through the full issue queue", "labels": [{"name": "severity:medium"}], "body": "Queues above two hundred issues need complete pagination.", "url": "https://github.com/Codevena/fixbuddy/issues/23"},
-            ]
-            self.notice = "DEMO · sample data · no GitHub calls or writes"
-            self.preview_key = settings_key(self.settings)
+    def rebuild_issue_list(self) -> None:
+        records = [issue for repo in self.catalog if repo.status == "ok"
+                   and (self.issue_filter_repo is None or repo.full_name == self.issue_filter_repo)
+                   for issue in repo.issues]
+        records.sort(key=lambda issue: (issue.repo.casefold(), -issue.number))
+        self.issues = [vars(issue).copy() for issue in records]
+        self.cursor = min(self.cursor, max(0, len(self.issues) - 1))
 
-    def invalidate_preview(self) -> None:
+    def select_repo(self, full_name: str) -> None:
+        if not any(repo.full_name == full_name for repo in self.catalog):
+            self.notice = "Repository is not in the current GitHub inventory"
+            return
+        if self.settings.repo != full_name:
+            self.settings.project = ""  # never carry a checkout to another repo
+        self.settings.repo = full_name
+        self.issue_filter_repo = full_name
+        self.selected.clear()
+        self.preview_key = None
+        self.actionable_order = []
+        self.cursor = 0
+        self.tab = 1
+        self.rebuild_issue_list()
+        self.notice = f"{full_name} selected · set its local checkout in SETUP before running"
+
+    def toggle_issue(self, issue: dict[str, Any]) -> None:
+        repo_name = str(issue["repo"])
+        number = int(issue["number"])
+        if self.settings.repo != repo_name:
+            self.settings.repo = repo_name
+            self.settings.project = ""
+            self.selected.clear()
+        self.preview_key = None
+        self.actionable_order = []
+        if number in self.selected:
+            self.selected.remove(number)
+        else:
+            self.selected.add(number)
+        self.notice = f"{repo_name} selected · {len(self.selected)} issue(s) selected for this repo"
+
+    def start_catalog(self) -> None:
+        if self.catalog_loading:
+            return
+        self.catalog_generation += 1
+        self.catalog_loading = True
+        self.catalog_error = None
+        self.catalog = []
+        self.repo_cursor = 0
+        self.issue_filter_repo = None
         self.issues = []
         self.selected.clear()
-        self.cursor = 0
         self.preview_key = None
+        self.actionable_order = []
+        self.notice = "Loading GitHub repositories and open issues…"
+        try:
+            self.catalog_process = subprocess.Popen(
+                [str(self.self_path), "--catalog-worker"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                bufsize=1, start_new_session=True,
+            )
+        except OSError as error:
+            self.catalog_loading = False
+            self.catalog_error = clean_display(str(error))[:180]
+            self.notice = f"GitHub inventory failed: {self.catalog_error}"
+            return
+        threading.Thread(target=self._catalog_reader,
+                         args=(self.catalog_process,), daemon=True).start()
+
+    def _catalog_reader(self, process: subprocess.Popen[str]) -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            try:
+                self.events.put(("catalog", json.loads(line)))
+            except ValueError:
+                self.events.put(("catalog", {"type": "error", "message": "Invalid inventory response"}))
+        stderr = process.stderr.read() if process.stderr is not None else ""
+        self.events.put(("catalog_exit", (process.wait(), clean_display(stderr)[:200])))
+
+    def invalidate_preview(self) -> None:
+        self.selected.clear()
+        self.preview_key = None
+        self.actionable_numbers.clear()
+        self.actionable_order.clear()
+        self.actionable_count = 0
 
     def init_colors(self) -> None:
         curses.start_color()
@@ -274,18 +482,25 @@ class TerminalApp:
             self.put(screen, row, x + width - 1, "│", "line")
         self.put(screen, y, x + 2, f" {title} ", "pink", True)
 
-    def refresh_preview(self, screen: curses.window) -> None:
-        if self.demo:
-            self.notice = "DEMO · preview refresh disabled"
-            return
-        identity = settings_key(self.settings)
-        previous_selection = set(self.selected) if self.preview_key == identity else set()
-        self.invalidate_preview()
+    def refresh_run_preview(self, screen: curses.window) -> bool:
+        identity = (settings_key(self.settings), self.catalog_generation)
+        if self.preview_key is not None and self.preview_key != identity:
+            self.invalidate_preview()
+            self.notice = "Repository or settings changed · selection cleared; press g again"
+            return False
+        self.preview_key = None
+        self.actionable_numbers.clear()
+        self.actionable_order.clear()
+        self.actionable_count = 0
         if not self.settings.repo or not self.settings.project:
-            self.tab = 1
-            self.notice = "Enter a repository and local checkout in SETUP"
-            return
-        self.notice = "Loading the read-only issue queue…"
+            self.tab = 2
+            self.notice = "Select a repository and set its local checkout in SETUP"
+            return False
+        repo = next((item for item in self.catalog if item.full_name == self.settings.repo), None)
+        if repo is None or repo.status != "ok":
+            self.notice = "The selected repository has no complete issue snapshot"
+            return False
+        self.notice = "Checking the selected repository without writes…"
         self.draw(screen)
         screen.refresh()
         try:
@@ -298,13 +513,22 @@ class TerminalApp:
             data = json.loads(result.stdout)
             if data.get("repo") != self.settings.repo or data.get("project") != self.settings.project:
                 raise RuntimeError("preview settings did not match the requested repository/checkout")
-            self.issues = data.get("issues", [])
-            self.selected = previous_selection & {int(issue["number"]) for issue in self.issues}
-            self.cursor = min(self.cursor, max(0, len(self.issues) - 1))
+            order = [int(issue["number"]) for issue in data.get("issues", [])]
+            numbers = set(order)
+            if not order or len(numbers) != len(order):
+                raise RuntimeError("no actionable issues in the selected repository")
+            if self.selected and not self.selected <= numbers:
+                raise RuntimeError("selected issue is no longer actionable")
+            self.actionable_numbers = numbers
+            self.actionable_order = order
+            self.actionable_count = len(numbers)
             self.preview_key = identity
-            self.notice = f"{len(self.issues)} actionable issue(s) · read-only preview"
+            self.notice = f"{len(numbers)} actionable issue(s) · read-only check passed"
+            return True
         except (OSError, ValueError, subprocess.TimeoutExpired, RuntimeError) as error:
+            self.invalidate_preview()
             self.notice = f"Preview failed: {clean_display(str(error))[:200]}"
+            return False
 
     def _reader(self, process: subprocess.Popen[str]) -> None:
         assert process.stdout is not None
@@ -318,25 +542,51 @@ class TerminalApp:
                 kind, value = self.events.get_nowait()
             except queue.Empty:
                 return
-            if kind == "line":
+            if kind == "catalog":
+                event_type = value.get("type")
+                if event_type == "repos":
+                    self.catalog = [repo_from_event(item) for item in value.get("data", [])]
+                elif event_type == "repo":
+                    updated = repo_from_event(value["data"])
+                    for index, existing in enumerate(self.catalog):
+                        if existing.full_name == updated.full_name:
+                            self.catalog[index] = updated
+                            break
+                    self.rebuild_issue_list()
+                elif event_type == "done":
+                    self.catalog_loading = False
+                    self.catalog_error = None
+                    self.catalog.sort(key=lambda repo: (repo.status == "error", -len(repo.issues), repo.full_name.casefold()))
+                    total_repos, total_issues, errors = catalog_totals(self.catalog)
+                    self.notice = f"{total_repos} repos · {total_issues} open issues" + \
+                        (f" · {errors} unknown" if errors else "")
+                elif event_type == "error":
+                    self.catalog_loading = False
+                    self.catalog_error = clean_display(value.get("message", "unknown error"))
+                    self.notice = f"GitHub inventory failed: {self.catalog_error}"
+            elif kind == "catalog_exit":
+                rc, error = value
+                if rc != 0 and self.catalog_loading:
+                    self.catalog_loading = False
+                    self.catalog_error = error or "unknown error"
+                    self.notice = f"GitHub inventory stopped: {self.catalog_error}"
+            elif kind == "line":
                 self.logs.append(value)
                 self.logs = self.logs[-1500:]
-            else:
+            elif kind == "exit":
                 self.run_exit = int(value)
                 self.notice = f"Run finished · exit {self.run_exit} · inspect logs below"
 
     def start_run(self) -> None:
-        if self.demo:
-            self.notice = "DEMO is read-only; exit demo to run FixBuddy"
+        if self.preview_key != (settings_key(self.settings), self.catalog_generation) \
+           or not self.actionable_order:
+            self.notice = "Settings or issue state changed · check the selected repo before running"
             return
-        if self.preview_key != settings_key(self.settings) or not self.issues:
-            self.notice = "Settings changed or preview failed · refresh the queue before running"
-            return
-        valid_numbers = {int(issue["number"]) for issue in self.issues}
-        if not self.selected <= valid_numbers:
+        if not self.selected <= self.actionable_numbers:
             self.notice = "Selection is stale · refresh the queue before running"
             return
-        numbers = sorted(self.selected)
+        numbers = [number for number in self.actionable_order
+                   if not self.selected or number in self.selected]
         command = build_run_command(self.script, self.settings, numbers)
         try:
             self.process = subprocess.Popen(
@@ -350,7 +600,7 @@ class TerminalApp:
         self.invalidate_preview()  # a completed run changes labels/PR state
         self.run_exit = None
         self.log_scroll = 0
-        self.tab = 2
+        self.tab = 3
         self.notice = "Pipeline running · x to interrupt safely"
         threading.Thread(target=self._reader, args=(self.process,), daemon=True).start()
 
@@ -363,8 +613,8 @@ class TerminalApp:
         self.put(screen, 0, 0, " " * width, "header")
         self.put(screen, 0, 1, " ◈ ", "badge", True)
         self.put(screen, 0, 6, " FIX BUDDY ", "header", True)
-        if width < 60:
-            self.put(screen, 0, width - 11, f" {self.tab + 1}/3 {TABS[self.tab]} ", "header", True)
+        if width < 72:
+            self.put(screen, 0, width - 12, f" {self.tab + 1}/4 {TABS[self.tab]} ", "header", True)
             return
         x = 24
         for index, label in enumerate(TABS):
@@ -377,12 +627,19 @@ class TerminalApp:
             self.put(screen, 0, max(x + 2, width - 30), clip_cells(repo, min(27, width - x - 3)), "header")
 
     def draw_hero(self, screen: curses.window, width: int, height: int) -> int:
+        repo_count, issue_count, error_count = catalog_totals(self.catalog)
+        if self.catalog_error:
+            repos, issues, unknown = "?", "?", "?"
+        elif self.catalog_loading and not self.catalog:
+            repos, issues, unknown = "…", "…", "…"
+        else:
+            repos, issues, unknown = f"{repo_count:03d}", f"{issue_count:03d}", f"{error_count:02d}"
         if height < 23:
-            self.put(screen, 2, 2, "◈ FIX BUDDY  ·  VERIFY → FIX → REVIEW → PR", "pink", True)
+            self.put(screen, 2, 2, f"◈ FIX BUDDY · {repos} repos · {issues} issues", "pink", True)
             return 4
         if width < 76:
             self.put(screen, 2, 3, "◈ FIX BUDDY", "pink", True)
-            self.put(screen, 4, 3, f"{len(self.issues):03d} actionable  ·  {len(self.selected):03d} selected", "text", True)
+            self.put(screen, 4, 3, f"{repos} repos · {issues} open · {unknown} unknown", "text", True)
             self.put(screen, 6, 3, "VERIFY  →  FIX  →  REVIEW  →  PR", "violet", True)
             return 9
         logo_x = 3
@@ -397,9 +654,9 @@ class TerminalApp:
             logo_x += 6
             glyph_index += 1
         x = 56 if width < 105 else 62
-        self.put(screen, 2, x, "ISSUES IN VIEW", "muted", True)
-        self.put(screen, 3, x, f"{len(self.issues):03d}  actionable", "text", True)
-        self.put(screen, 4, x, f"{len(self.selected):03d}  selected", "pink", True)
+        self.put(screen, 2, x, f"{repos}  REPOSITORIES", "muted", True)
+        self.put(screen, 3, x, f"{issues}  OPEN ISSUES", "text", True)
+        self.put(screen, 4, x, f"{unknown}   UNKNOWN", "amber" if error_count or self.catalog_error else "green", True)
         self.put(screen, 8, 3, "VERIFY  →  FIX  →  REVIEW  →  PR", "violet", True)
         if width >= 110:
             self.put(screen, 3, width - 29, "MERGE POLICY", "muted", True)
@@ -408,21 +665,68 @@ class TerminalApp:
                      "amber" if self.settings.auto_merge else "green", True)
         return 10
 
+    def draw_repos(self, screen: curses.window, width: int, height: int, top: int) -> None:
+        left, right = panel_widths(width)
+        panel_height = max(3, height - top - 2)
+        self.frame(screen, top, 2, panel_height, left, "GITHUB REPOSITORIES")
+        rows = max(0, panel_height - 2)
+        if not self.catalog:
+            self.put(screen, top + 2, 5,
+                     "Loading repositories…" if self.catalog_loading else
+                     "Inventory unavailable · press r" if self.catalog_error else "No repositories available", "muted")
+            return
+        start = max(0, min(self.repo_cursor - rows // 2, len(self.catalog) - rows))
+        for row, repo in enumerate(self.catalog[start:start + rows]):
+            index = start + row
+            count = str(len(repo.issues)) if repo.status in ("ok", "disabled") else \
+                "…" if repo.status == "loading" else "?"
+            visibility = "◆" if repo.private else "◇"
+            prefix = f" {'▸' if index == self.repo_cursor else ' '} {visibility} "
+            name_width = max(1, left - 2 - display_width(prefix) - 5)
+            line = pad_cells(prefix + pad_cells(repo.full_name, name_width) + f" {count:>3}",
+                             max(0, left - 2))
+            self.put(screen, top + 1 + row, 3, line,
+                     "select" if index == self.repo_cursor else "text")
+        if right:
+            repo = self.catalog[self.repo_cursor]
+            x = left + 5
+            self.frame(screen, top, x, panel_height, right, "REPOSITORY")
+            inner = max(1, right - 4)
+            self.put(screen, top + 2, x + 2, clip_cells(repo.full_name, inner), "pink", True)
+            self.put(screen, top + 4, x + 2,
+                     "PRIVATE" if repo.private else "PUBLIC", "muted")
+            count_text = f"{len(repo.issues)} open issues" if repo.status == "ok" else \
+                "Issues disabled" if repo.status == "disabled" else \
+                "Still loading" if repo.status == "loading" else "Issue count unknown"
+            self.put(screen, top + 6, x + 2, count_text,
+                     "amber" if repo.status == "error" else "green")
+            if repo.status == "error":
+                for offset, line in enumerate(_wrap(repo.error, inner, max(1, panel_height - 10))):
+                    self.put(screen, top + 8 + offset, x + 2, line, "amber")
+            elif repo.status == "ok":
+                for offset, issue in enumerate(repo.issues[:max(0, panel_height - 10)]):
+                    self.put(screen, top + 8 + offset, x + 2,
+                             clip_cells(f"#{issue.number} {issue.title}", inner), "muted")
+
     def draw_queue(self, screen: curses.window, width: int, height: int, top: int) -> None:
         left, right = panel_widths(width)
         panel_height = max(3, height - top - 2)
-        self.frame(screen, top, 2, panel_height, left, "ISSUE QUEUE")
+        title = f"{self.issue_filter_repo} · OPEN ISSUES" if self.issue_filter_repo else "ALL OPEN ISSUES"
+        self.frame(screen, top, 2, panel_height, left, title)
         rows = max(0, panel_height - 2)
         if not self.issues:
-            self.put(screen, top + 2, 5, "No actionable issues. Press r to refresh.", "muted")
+            self.put(screen, top + 2, 5,
+                     "Loading issues…" if self.catalog_loading else
+                     "Inventory unavailable · press r" if self.catalog_error else "No open issues in this view", "muted")
             return
         start = max(0, min(self.cursor - rows // 2, len(self.issues) - rows))
         for row, issue in enumerate(self.issues[start:start + rows]):
             index = start + row
             number = int(issue.get("number", 0))
-            marker = "●" if number in self.selected else "○"
+            marker = "●" if issue["repo"] == self.settings.repo and number in self.selected else "○"
             severity = _severity(issue)
-            prefix = f" {'▸' if index == self.cursor else ' '} {marker} #{number:<5} {severity:<8} "
+            repo_label = "" if self.issue_filter_repo else f"{issue['repo']}  "
+            prefix = f" {'▸' if index == self.cursor else ' '} {marker} {repo_label}#{number:<5} {severity:<8} "
             title = clean_display(issue.get("title", ""))
             line = pad_cells(prefix + title, max(0, left - 2))
             self.put(screen, top + 1 + row, 3, line, "select" if index == self.cursor else "text")
@@ -431,7 +735,8 @@ class TerminalApp:
             self.frame(screen, top, x, panel_height, right, "SELECTED ISSUE")
             issue = self.issues[self.cursor]
             content_width = max(1, right - 4)
-            self.put(screen, top + 2, x + 2, f"#{issue.get('number')}  {_severity(issue)}", "pink", True)
+            self.put(screen, top + 2, x + 2,
+                     f"{issue.get('repo')}  #{issue.get('number')}  {_severity(issue)}", "pink", True)
             line_y = top + 4
             for line in _wrap(issue.get("title", ""), content_width, 3):
                 self.put(screen, line_y, x + 2, line, "text", True)
@@ -451,7 +756,7 @@ class TerminalApp:
         panel_height = max(3, height - top - 2)
         self.frame(screen, top, 2, panel_height, max(4, width - 4), "RUN SETUP")
         fields = (
-            ("Repository", self.settings.repo or "press Enter to set"),
+            ("Repository", self.settings.repo or "choose in REPOS"),
             ("Checkout", self.settings.project or "press Enter to set"),
             ("Severity", self.settings.severity or "all"),
             ("Batch size", str(self.settings.max_issues) if self.settings.max_issues else "all"),
@@ -471,7 +776,7 @@ class TerminalApp:
                      "amber" if index == 6 and self.settings.auto_merge else style)
         if panel_height >= 13:
             self.put(screen, top + panel_height - 3, 5,
-                     "Enter: edit / cycle   ← →: cycle   r: refresh preview", "muted")
+                     "Enter: select / edit   ← →: cycle   r: refresh GitHub", "muted")
 
     def draw_run(self, screen: curses.window, width: int, height: int, top: int) -> None:
         panel_height = max(3, height - top - 2)
@@ -484,14 +789,16 @@ class TerminalApp:
         for index, line in enumerate(self.logs[start:start + visible]):
             self.put(screen, top + 3 + index, 5, line, "muted")
         if not self.logs:
-            self.put(screen, top + 4, 5, "Start from QUEUE with g. No GitHub write occurs in preview.", "muted")
+            self.put(screen, top + 4, 5, "Select one repo and press g. Inventory reads cause no writes.", "muted")
 
     def draw_footer(self, screen: curses.window, width: int, height: int) -> None:
         self.put(screen, height - 1, 0, " " * width, "footer")
-        hints = "  Tab tabs   ↑↓ move   Space select   Enter detail   r refresh   g run   ? help   q quit"
+        hints = "  Tab tabs   ↑↓ move   Enter choose repo   r refresh   g run   ? help   q quit"
         if self.tab == 1:
-            hints = "  Tab tabs   ↑↓ field   Enter edit   ←→ choice   r refresh   g run   ? help   q quit"
+            hints = "  Tab tabs   ↑↓ issue   Space select   Enter detail   a all/repo   g run   q quit"
         if self.tab == 2:
+            hints = "  Tab tabs   ↑↓ field   Enter edit   ←→ choice   g run   ? help   q quit"
+        if self.tab == 3:
             hints = "  Tab tabs   ↑↓ scroll   x interrupt   ? help   q quit"
         self.put(screen, height - 1, 0, clip_cells(hints, width), "footer")
         if height >= 3:
@@ -510,16 +817,17 @@ class TerminalApp:
         self.frame(screen, y, x, box_height, box_width, title)
         lines: list[str] = []
         if self.dialog == "help":
-            lines = ["1/2/3 or Tab   switch tabs", "↑/↓           move through issues or fields", "Space         select issues; no selection means all", "Enter         inspect issue or change a setup field", "r             refresh read-only GitHub preview", "g             confirm and start the pipeline", "x             interrupt the running pipeline", "q / Esc       close or quit"]
+            lines = ["1–4 or Tab    switch tabs", "↑/↓           move through repos, issues or fields", "Enter         choose repo or inspect issue", "Space         select issues from one repo only", "a             toggle all issues / selected repo", "r             refresh the read-only GitHub inventory", "g             check selection and confirm a run", "q / Esc       close or quit"]
         elif self.dialog == "detail" and self.issues:
             issue = self.issues[self.cursor]
-            lines = [f"#{issue.get('number')}  {_severity(issue)}  {clean_display(issue.get('title', ''))}", ""]
+            lines = [f"{issue.get('repo')}  #{issue.get('number')}  {_severity(issue)}", "",
+                     clean_display(issue.get("title", "")), ""]
             lines += _wrap(issue.get("body", "") or "No description", box_width - 4, box_height - 6)
         elif self.dialog == "confirm":
-            count = len(self.selected) if self.selected else len(self.issues)
+            count = len(self.selected) if self.selected else self.actionable_count
             if self.settings.max_issues is not None:
                 count = min(count, self.settings.max_issues)
-            lines = [f"Repository  {self.settings.repo}", f"Issues      {count} of {len(self.issues)} actionable",
+            lines = [f"Repository  {self.settings.repo}", f"Issues      {count} of {self.actionable_count} actionable",
                      f"Agents      {self.settings.fix_agent}  →  {self.settings.review_agent}",
                      f"Merge       {'AUTO-MERGE REQUESTED' if self.settings.auto_merge else 'PR stays open for you'}", "",
                      "Press y to start · n or Esc to cancel"]
@@ -538,8 +846,10 @@ class TerminalApp:
         self.draw_header(screen, width)
         top = self.draw_hero(screen, width, height)
         if self.tab == 0:
-            self.draw_queue(screen, width, height, top)
+            self.draw_repos(screen, width, height, top)
         elif self.tab == 1:
+            self.draw_queue(screen, width, height, top)
+        elif self.tab == 2:
             self.draw_setup(screen, width, height, top)
         else:
             self.draw_run(screen, width, height, top)
@@ -550,6 +860,10 @@ class TerminalApp:
     def edit_field(self, screen: curses.window) -> None:
         names = ("Repository (owner/repo)", "Local checkout path", "Severity", "Batch size", "Fix agent", "Reviewer", "Auto-merge")
         index = self.setup_cursor
+        if index == 0:
+            self.tab = 0
+            self.notice = "Choose a repository in REPOS with Enter"
+            return
         if index in (2, 4, 5, 6):
             self.cycle_field(1)
             return
@@ -564,18 +878,16 @@ class TerminalApp:
         try:
             raw = screen.getstr(height - 2, min(width - 2, len(prompt) + 1), max(1, width - len(prompt) - 3))
             value = raw.decode("utf-8", errors="replace").strip()
-            if index == 0 and value:
-                self.settings.repo = value
-            elif index == 1 and value:
+            if index == 1 and value:
                 self.settings.project = os.path.expanduser(value)
             elif index == 3:
                 self.settings.max_issues = int(value) if value.isdecimal() and int(value) > 0 else None
             self.invalidate_preview()
-            self.notice = "Settings changed · press r to refresh the queue"
+            self.notice = "Settings changed · press g to check before running"
         finally:
             curses.noecho()
             curses.curs_set(0)
-            screen.timeout(100)
+            screen.nodelay(True)
 
     def cycle_field(self, direction: int) -> None:
         index = self.setup_cursor
@@ -591,7 +903,7 @@ class TerminalApp:
         elif index == 6:
             self.settings.auto_merge = not self.settings.auto_merge
         self.invalidate_preview()
-        self.notice = "Settings changed · press r to refresh the queue"
+        self.notice = "Settings changed · press g to check before running"
 
     def handle_key(self, screen: curses.window, key: int) -> bool:
         if key == -1:
@@ -615,40 +927,45 @@ class TerminalApp:
                 return True
             return False
         if key in (9,):
-            self.tab = (self.tab + 1) % 3
+            self.tab = (self.tab + 1) % 4
             return True
-        if key in (ord("1"), ord("2"), ord("3")):
+        if key in (ord("1"), ord("2"), ord("3"), ord("4")):
             self.tab = key - ord("1")
             return True
         if key in (ord("r"), ord("R")):
             if self.process is None or self.process.poll() is not None:
-                self.refresh_preview(screen)
+                self.start_catalog()
             return True
         if key in (ord("g"), ord("G")):
             if self.process is not None and self.process.poll() is None:
                 self.notice = "A run is already active"
-            elif self.issues and self.preview_key == settings_key(self.settings):
+            elif self.refresh_run_preview(screen):
                 self.dialog = "confirm"
-            else:
-                self.notice = "No actionable issues or missing repository/checkout"
             return True
         if key in (ord("x"), ord("X")) and self.process is not None and self.process.poll() is None:
             self.dialog = "stop"
             return True
         if self.tab == 0:
+            if key in (curses.KEY_DOWN, ord("j")) and self.catalog:
+                self.repo_cursor = min(len(self.catalog) - 1, self.repo_cursor + 1)
+            elif key in (curses.KEY_UP, ord("k")) and self.catalog:
+                self.repo_cursor = max(0, self.repo_cursor - 1)
+            elif key in (10, 13, curses.KEY_ENTER) and self.catalog:
+                self.select_repo(self.catalog[self.repo_cursor].full_name)
+        elif self.tab == 1:
             if key in (curses.KEY_DOWN, ord("j")) and self.issues:
                 self.cursor = min(len(self.issues) - 1, self.cursor + 1)
             elif key in (curses.KEY_UP, ord("k")) and self.issues:
                 self.cursor = max(0, self.cursor - 1)
             elif key == ord(" ") and self.issues:
-                number = int(self.issues[self.cursor]["number"])
-                if number in self.selected:
-                    self.selected.remove(number)
-                else:
-                    self.selected.add(number)
+                self.toggle_issue(self.issues[self.cursor])
             elif key in (10, 13, curses.KEY_ENTER) and self.issues:
                 self.dialog = "detail"
-        elif self.tab == 1:
+            elif key in (ord("a"), ord("A")):
+                self.issue_filter_repo = None if self.issue_filter_repo else self.settings.repo or None
+                self.cursor = 0
+                self.rebuild_issue_list()
+        elif self.tab == 2:
             if key in (curses.KEY_DOWN, ord("j")):
                 self.setup_cursor = min(6, self.setup_cursor + 1)
             elif key in (curses.KEY_UP, ord("k")):
@@ -659,7 +976,7 @@ class TerminalApp:
                 self.cycle_field(-1)
             elif key in (10, 13, curses.KEY_ENTER, ord("e")):
                 self.edit_field(screen)
-        elif self.tab == 2:
+        elif self.tab == 3:
             if key in (curses.KEY_UP, ord("k")):
                 self.log_scroll = min(max(0, len(self.logs) - 1), self.log_scroll + 1)
             elif key in (curses.KEY_DOWN, ord("j")):
@@ -670,17 +987,25 @@ class TerminalApp:
         self.init_colors()
         curses.curs_set(0)
         screen.keypad(True)
-        screen.timeout(100)
-        if not self.demo:
-            self.refresh_preview(screen)
+        screen.nodelay(True)
+        self.start_catalog()
         try:
             while True:
                 self.drain_events()
                 self.draw(screen)
                 screen.refresh()
-                if not self.handle_key(screen, screen.getch()):
+                key = screen.getch()
+                if key == -1:
+                    time.sleep(0.03)  # yield even when a PTY returns ERR immediately
+                if not self.handle_key(screen, key):
                     break
         finally:
+            if self.catalog_process is not None and self.catalog_process.poll() is None:
+                os.killpg(self.catalog_process.pid, signal.SIGTERM)
+                try:
+                    self.catalog_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    os.killpg(self.catalog_process.pid, signal.SIGKILL)
             if self.process is not None and self.process.poll() is None:
                 self.stop_run()
                 try:
@@ -693,14 +1018,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="FixBuddy terminal interface")
     parser.add_argument("--repo", help="GitHub repository (owner/name)")
     parser.add_argument("--project", help="local target checkout")
-    parser.add_argument("--demo", action="store_true", help="read-only visual demo without GitHub calls")
+    parser.add_argument("--catalog-worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    script = Path(__file__).with_name("fixbuddy.sh")
+    if args.catalog_worker:
+        return catalog_worker_main()
+    script = Path(os.environ.get("FIXBUDDY_SELF") or Path(__file__).with_name("core.sh"))
     if not script.is_file():
-        parser.error(f"fixbuddy.sh must be next to this file: {script}")
+        parser.error(f"FixBuddy core executable is unavailable: {script}")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("the terminal UI requires an interactive terminal")
-    app = TerminalApp(script, default_settings(args), demo=args.demo)
+    app = TerminalApp(script, default_settings(args))
     try:
         curses.wrapper(app.run)
     except KeyboardInterrupt:

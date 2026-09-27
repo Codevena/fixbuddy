@@ -1,5 +1,22 @@
 # Next session
 
+## Unreleased single-file candidate — 2026-09-27
+
+The current worktree contains a one-file `fixbuddy` command assembled from
+`src/core.sh`, `src/tui.py` and `src/wizard.sh` by `scripts/build.py`. Running
+it interactively opens an account-wide GitHub repository and open-issue view;
+`--wizard` and direct CLI flags retain the existing pipeline. The demo has
+been removed. `install.sh --local` installs only `fixbuddy`; the default
+published v0.8.0 installation path remains available. The Action points at
+the bundled command. A run now checks the selected repository against both
+origin fetch and push destinations before any writes.
+
+This section describes the working candidate, not a published release. Run
+`python3 scripts/build.py` after source changes, then regenerate `SHA256SUMS`
+for `fixbuddy`. Verify tests and review before a local commit. Do not push or
+publish this candidate without an explicit current-task instruction. The
+untracked `review-todo.md` belongs to Markus and is outside the product commit.
+
 ## Published v0.8.0 — 2026-09-27
 
 PR #12 was merged to `main` as `f17d847`; its required Shell checks,
@@ -89,10 +106,10 @@ read-only-stage guards), both 2026-06-12.
 
 ## Release checklist (per release)
 
-1. Bump `VERSION` in `fixbuddy.sh` (+ header), wizard header/banner,
-   `install.sh` `DEFAULT_REF`, README one-liners; update `CHANGELOG.md`.
-2. Regenerate `SHA256SUMS` (`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py >
-   SHA256SUMS`) — `install.sh` verifies fail-closed.
+1. Bump `VERSION` in `src/core.sh` (+ header), wizard header/banner,
+   `install.sh` `DEFAULT_REF`, README install instructions; update `CHANGELOG.md`.
+2. Run `python3 scripts/build.py`, then regenerate `SHA256SUMS` for the single
+   `fixbuddy` file. The installer verifies the published checksum fail-closed.
 3. Merge via PR; then `git tag vX.Y.Z && git push origin vX.Y.Z` and
    `git tag -f v1 vX.Y.Z && git push origin v1 --force`.
 4. `gh release create vX.Y.Z` and smoke-test the install one-liner.
@@ -101,5 +118,5 @@ read-only-stage guards), both 2026-06-12.
 
 - Log retention/pruning for `~/.fixbuddy/runs`
 - New agents as they appear (validation list + run_agent case + wizard + docs)
-- The `--help` sed range (`2,51p`) must be adjusted whenever header lines are
-  added — candidate for a less brittle help mechanism
+- Help is embedded by `scripts/build.py`; update the `src/core.sh` header and
+  regenerate the bundle when adding options.

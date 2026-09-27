@@ -5,7 +5,7 @@
 [![CI](https://github.com/Codevena/fixbuddy/actions/workflows/ci.yml/badge.svg)](https://github.com/Codevena/fixbuddy/actions/workflows/ci.yml)
 [![version](https://img.shields.io/github/v/tag/Codevena/fixbuddy?label=version)](https://github.com/Codevena/fixbuddy/tags)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![shell](https://img.shields.io/badge/shell-bash-black.svg)](fixbuddy.sh)
+[![shell](https://img.shields.io/badge/shell-bash-black.svg)](fixbuddy)
 [![agents](https://img.shields.io/badge/agents-claude%20%7C%20codex%20%7C%20opencode%20%7C%20agy-purple.svg)](#supported-agents)
 
 fixbuddy reads open GitHub issues, asks one agent to verify and fix each issue, asks a second agent to review the committed diff, then opens a pull request. If enabled, it requests auto-merge after review approval.
@@ -54,82 +54,42 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 
 ## Quick Start
 
-Install with the one-liner (macOS and Linux, including WSL2):
+The single-file version is currently a development candidate. From this checkout,
+install the bundled command locally (macOS or Linux, including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash
+bash install.sh --local --prefix "$HOME/.local/bin"
+gh auth login
+fixbuddy
 ```
 
-This downloads the pinned `v0.8.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+Until this candidate is published, the public `main` branch and pinned `v0.8.0`
+installer still contain the older multi-file version. From the development
+checkout, `./fixbuddy` works without installation. The installer copies only
+`fixbuddy` and verifies its entry in `SHA256SUMS`. Once a single-file ref is
+published, `bash install.sh --ref <published-ref>` downloads that bundle.
 
-**Prefer to read before you run?** The installer is short — inspect it first, then run it:
+`fixbuddy` opens the terminal UI when run interactively. It uses your `gh`
+login to list **all repositories visible to your account**, including private
+repositories you can access, and shows the open issues across them. GitHub
+pull requests are excluded from issue counts. If an issue request fails, the
+repository is marked unknown instead of showing a false zero. Press `?` for
+shortcuts, select a repository, then set its local checkout in **SETUP** before
+starting a run. The selected checkout must point at the selected GitHub
+repository. No checkout is required just to browse the read-only inventory.
+
+The UI uses Python 3's standard library. If Python 3 is unavailable, the
+interactive command opens the Bash wizard. You can also run `fixbuddy --wizard`
+explicitly. A non-interactive config-based run uses `fixbuddy run`.
+
+For a read-only preview of one repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh -o install.sh
-less install.sh        # read it
-bash install.sh        # then run it
+fixbuddy --repo owner/repo --project ~/code/repo --dry-run
 ```
 
-The installer checks downloaded scripts against `SHA256SUMS` when available
-(download integrity — see [Safety Model](#safety-model)). `--with-tui` requires
-the checksum file and a checksum for the UI.
-
-Then run:
-
-```bash
-fixbuddy-wizard.sh
-```
-
-To install the terminal UI as well, use Python 3 and pass `--with-tui`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash -s -- --with-tui
-fixbuddy-tui.py --demo
-```
-
-The UI also runs directly from a source checkout and needs no extra Python
-packages:
-
-```bash
-./fixbuddy-tui.py --demo
-./fixbuddy-tui.py --repo owner/repo --project ~/code/repo
-```
-
-The demo is read-only. In a real session, **QUEUE** previews actionable issues,
-Space selects specific issues, **SETUP** edits run options, and `g` asks for
-confirmation before starting the Bash pipeline. **RUN** shows progress; `x`
-requests a safe interrupt. Press `?` for shortcuts. The UI starts with
-auto-merge off even if an existing config file enables it; enable it explicitly
-in SETUP for that run.
-
-The base installation stays Bash-only. `--with-tui` adds the checked Python
-program from the same pinned v0.8.0 release.
-
-### Developer install
-
-To modify the scripts, clone the repository instead:
-
-```bash
-git clone <your-fork-or-upstream-url> fixbuddy
-cd fixbuddy
-chmod +x fixbuddy.sh fixbuddy-wizard.sh
-./fixbuddy-wizard.sh
-```
-
-Direct usage:
-
-```bash
-./fixbuddy.sh \
-  --repo owner/repo \
-  --project ~/code/repo \
-  --severity high \
-  --fix-agent claude \
-  --review-agent codex \
-  --max 10 \
-  --yes
-```
-
-Start with `--dry-run` or `--max 1` on a new repository.
+For an agent run, pass `--max 1` and review the proposed issue first. The
+terminal UI keeps auto-merge off until you enable it in **SETUP**.
 
 ## Requirements
 
@@ -229,7 +189,7 @@ notify_cmd  = curl -s -d @- ntfy.sh/my-topic
 
 **Security note:** config files are operator-controlled and parsed without `eval` or `source`. Values are assigned as plain strings, so a config containing shell metacharacters (e.g. `$(...)`) cannot execute code. `check_cmd` entries are run by fixbuddy itself, consistent with the same operator-trust model as CLI flags — only issue *content* is treated as untrusted input.
 
-**Wizard:** running `fixbuddy-wizard.sh` offers to save the collected settings to `./.fixbuddy.conf` at the end. The absolute path written is printed, and a warning is shown if the current directory differs from `--project`, since fixbuddy reads the project config from wherever it is launched.
+**Wizard:** running `fixbuddy --wizard` offers to save the collected settings to `./.fixbuddy.conf` at the end. The absolute path written is printed, and a warning is shown if the current directory differs from `--project`, since fixbuddy reads the project config from wherever it is launched.
 
 ## Labels
 
@@ -246,6 +206,8 @@ fixbuddy creates and manages these labels:
 ## Safety Model
 
 - fixbuddy refuses to start if the target checkout has a dirty working tree.
+- Before any write, fixbuddy verifies that the checkout's origin fetch and push
+  destinations identify the selected `owner/repo`.
 - Each issue gets a fresh `fix/issue-N` branch.
 - A failed fetch or base update blocks that issue. A closed PR's stale remote
   branch is replaced only with a lease pinned to its observed SHA; an open PR
@@ -285,7 +247,7 @@ Useful markers:
 Preview targets (no writes at all — no labels created, no issues edited):
 
 ```bash
-./fixbuddy.sh --repo owner/repo --project ~/code/repo --severity high --dry-run
+fixbuddy --repo owner/repo --project ~/code/repo --severity high --dry-run
 ```
 
 Add `--json` to that command for a machine-readable preview.
@@ -293,13 +255,13 @@ Add `--json` to that command for a machine-readable preview.
 Fix specific issues only:
 
 ```bash
-./fixbuddy.sh --repo owner/repo --project ~/code/repo --issue 42 --issue 57
+fixbuddy --repo owner/repo --project ~/code/repo --issue 42 --issue 57
 ```
 
 Add a test gate so fixes are never reviewed unless all checks pass:
 
 ```bash
-./fixbuddy.sh --repo owner/repo --project ~/code/repo \
+fixbuddy --repo owner/repo --project ~/code/repo \
   --check-cmd 'pnpm test' --check-cmd 'pnpm typecheck' \
   --fix-agent claude --review-agent codex
 ```
@@ -307,7 +269,7 @@ Add a test gate so fixes are never reviewed unless all checks pass:
 Open PRs for human merge (the default):
 
 ```bash
-./fixbuddy.sh --repo owner/repo --project ~/code/repo \
+fixbuddy --repo owner/repo --project ~/code/repo \
   --fix-agent claude --review-agent codex \
   --no-auto-merge --max 5
 ```
@@ -316,27 +278,27 @@ Request auto-merge only when you want GitHub to merge an approved PR after its
 required checks pass:
 
 ```bash
-./fixbuddy.sh --repo owner/repo --project ~/code/repo --auto-merge --max 1
+fixbuddy --repo owner/repo --project ~/code/repo --auto-merge --max 1
 ```
 
 Use one agent for both roles:
 
 ```bash
-./fixbuddy.sh --repo owner/repo --project ~/code/repo \
+fixbuddy --repo owner/repo --project ~/code/repo \
   --fix-agent claude --review-agent claude --max 3
 ```
 
 Use agy (Antigravity CLI) as a cross-vendor reviewer:
 
 ```bash
-./fixbuddy.sh --repo owner/repo --project ~/code/repo \
+fixbuddy --repo owner/repo --project ~/code/repo \
   --fix-agent claude --review-agent agy
 ```
 
 Get a push notification when an unattended batch finishes (anything that reads stdin works — ntfy, a Slack webhook, `mail`):
 
 ```bash
-./fixbuddy.sh --repo owner/repo --project ~/code/repo --max 10 \
+fixbuddy --repo owner/repo --project ~/code/repo --max 10 \
   --notify-cmd 'curl -s -d @- ntfy.sh/my-fixbuddy-topic'
 ```
 

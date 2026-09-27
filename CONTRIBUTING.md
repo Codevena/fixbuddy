@@ -1,6 +1,7 @@
 # Contributing
 
-Thanks for improving fixbuddy. This project is intentionally small: Bash scripts, clear behavior, and minimal dependencies.
+Thanks for improving fixbuddy. The shipped command is one generated file;
+maintained source lives in `src/`.
 
 ## Development Setup
 
@@ -20,20 +21,24 @@ Agent CLIs are needed only for end-to-end manual testing.
 Run these before opening a pull request:
 
 ```bash
-bash -n fixbuddy.sh
-bash -n fixbuddy-wizard.sh
+bash -n fixbuddy
+bash -n src/core.sh
+bash -n src/wizard.sh
 bash -n install.sh
-bash -n action-collect-logs.sh
-shellcheck fixbuddy.sh fixbuddy-wizard.sh install.sh action-collect-logs.sh tests/integration.sh tests/stubs/agent tests/stubs/gh tests/stubs/curl tests/stubs/git-push-race
+bash -n src/action-collect-logs.sh
+shellcheck src/core.sh src/wizard.sh install.sh src/action-collect-logs.sh tests/integration.sh tests/stubs/agent tests/stubs/gh tests/stubs/curl tests/stubs/git-push-race tests/stubs/git
 tests/integration.sh
-python3 -m py_compile fixbuddy-tui.py
+python3 scripts/build.py --check
+python3 -m py_compile src/tui.py
 python3 -m unittest discover -s tests -p 'test_tui.py'
 ```
 
 `tests/integration.sh` runs the full pipeline offline against stubbed `gh`/agent
 CLIs and a local bare repository — no network, no API keys, a few seconds.
 
-If `shellcheck` is not available locally, the GitHub Actions workflow will run it for pull requests.
+After changing `src/core.sh`, `src/tui.py`, or `src/wizard.sh`, run
+`python3 scripts/build.py` and update the single `fixbuddy` checksum in
+`SHA256SUMS`. If `shellcheck` is unavailable locally, CI runs it on pull requests.
 
 ## Pull Request Guidelines
 

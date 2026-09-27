@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic integration tests for fixbuddy.sh. No network, no real gh, no
+# Deterministic integration tests for the single-file fixbuddy. No network, no real gh, no
 # real agents: PATH is prefixed with tests/stubs (canned gh + scripted agent
 # doubles) and the GitHub remote is a local bare repository, so branch
 # creation, commits, and pushes are real git operations. Each scenario runs in
@@ -57,7 +57,7 @@ run_fixbuddy() {
     FIXBUDDY_TEST_MUTLOG="$MUTLOG" \
     FIXBUDDY_TEST_STAGELOG="$STAGELOG" \
     FIXBUDDY_TEST_AGYLOG="$AGYLOG" \
-    bash "$ROOT/fixbuddy.sh" --repo acme/app --project "$TMP/project" --yes "$@" \
+    bash "$ROOT/fixbuddy" --repo acme/app --project "$TMP/project" --yes "$@" \
   ) > "$RUNLOG" 2>&1
   RC=$?
 }
@@ -343,6 +343,35 @@ test_fetch_failure_blocks_before_fix() {
   assert_grep "$MUTLOG" '^issue edit 7 .*--add-label fix:needs-human'
 }
 
+test_mismatched_origin_causes_no_writes() {
+  SCENARIO=origin-mismatch; make_fixture
+  run_fixbuddy
+  [ "$RC" -eq 2 ] || fail "expected origin rejection exit 2, got $RC"
+  [ ! -s "$MUTLOG" ] || fail "origin mismatch caused GitHub writes"
+  [ ! -s "$STAGELOG" ] || fail "origin mismatch invoked an agent"
+  git -C "$TMP/origin.git" show-ref --verify --quiet refs/heads/fix/issue-7 \
+    && fail "origin mismatch pushed a branch"
+}
+
+test_mismatched_push_destination_causes_no_writes() {
+  SCENARIO=pushurl-mismatch; make_fixture
+  run_fixbuddy
+  [ "$RC" -eq 2 ] || fail "expected push-origin rejection exit 2, got $RC"
+  [ ! -s "$MUTLOG" ] || fail "push origin mismatch caused GitHub writes"
+  [ ! -s "$STAGELOG" ] || fail "push origin mismatch invoked an agent"
+}
+
+test_reviewer_cannot_redirect_push_destination() {
+  SCENARIO=reviewpushurl; make_fixture
+  git init -q --bare "$TMP/wrong.git"
+  run_fixbuddy
+  [ "$RC" -ne 0 ] || fail "origin changed after review but run succeeded"
+  assert_no_grep "$MUTLOG" '^pr create '
+  git -C "$TMP/wrong.git" show-ref --verify --quiet refs/heads/fix/issue-7 \
+    && fail "reviewer redirected the approved branch to another remote"
+  assert_substr "$RUNLOG" 'origin fetch/push destination does not match'
+}
+
 test_verify_reads_fetched_base() {
   SCENARIO=freshbase; make_fixture
   git clone -q "$TMP/origin.git" "$TMP/other" 2>/dev/null
@@ -499,7 +528,7 @@ test_action_logs_copy_only_this_run() {
   printf '%s\n' "$runs/current-run" > "$pointer"
   HOME="$TMP/home" FIXBUDDY_LOG_POINTER="$pointer" \
     FIXBUDDY_WORKSPACE="$TMP/workspace" GITHUB_OUTPUT="$TMP/action-output" \
-    bash "$ROOT/action-collect-logs.sh" > "$RUNLOG" 2>&1
+    bash "$ROOT/src/action-collect-logs.sh" > "$RUNLOG" 2>&1
   RC=$?
   [ "$RC" -eq 0 ] || fail "collector exit code $RC"
   [ -f "$TMP/workspace/fixbuddy-logs/current-run/issue-7.log" ] \
@@ -513,7 +542,8 @@ test_json_preview_uses_core_queue() {
   SCENARIO=happy; make_fixture
   ( cd "$TMP" && HOME="$TMP/home" PATH="$STUBS:$PATH" \
     FIXBUDDY_TEST_SCENARIO="$SCENARIO" FIXBUDDY_TEST_MUTLOG="$MUTLOG" \
-    bash "$ROOT/fixbuddy.sh" --repo acme/app --project "$TMP/project" \
+    FIXBUDDY_TEST_REAL_GIT="$REAL_GIT" FIXBUDDY_TEST_PROJECT="$TMP/project" \
+    bash "$ROOT/fixbuddy" --repo acme/app --project "$TMP/project" \
       --dry-run --json --no-auto-merge ) > "$TMP/preview.json" 2> "$RUNLOG"
   RC=$?
   [ "$RC" -eq 0 ] || fail "preview exit code $RC"
@@ -526,7 +556,8 @@ test_json_preview_empty_queue() {
   SCENARIO=empty; make_fixture
   ( cd "$TMP" && HOME="$TMP/home" PATH="$STUBS:$PATH" \
     FIXBUDDY_TEST_SCENARIO="$SCENARIO" FIXBUDDY_TEST_MUTLOG="$MUTLOG" \
-    bash "$ROOT/fixbuddy.sh" --repo acme/app --project "$TMP/project" \
+    FIXBUDDY_TEST_REAL_GIT="$REAL_GIT" FIXBUDDY_TEST_PROJECT="$TMP/project" \
+    bash "$ROOT/fixbuddy" --repo acme/app --project "$TMP/project" \
       --dry-run --json ) > "$TMP/preview.json" 2> "$RUNLOG"
   RC=$?
   [ "$RC" -eq 0 ] || fail "empty preview exit code $RC"
@@ -538,7 +569,7 @@ test_wizard_autonomous_mode_is_explicit() {
   SCENARIO=happy; make_fixture
   printf 'acme/app\n%s\n5\n3\n1\n1\n1\nn\nn\n' "$TMP/project" | \
     ( cd "$TMP" && HOME="$TMP/home" PATH="$STUBS:$PATH" \
-      bash "$ROOT/fixbuddy-wizard.sh" ) > "$RUNLOG" 2>&1
+      bash "$ROOT/fixbuddy" --wizard ) > "$RUNLOG" 2>&1
   RC=$?
   [ "$RC" -eq 0 ] || fail "wizard exit code $RC"
   assert_substr "$RUNLOG" '--auto-merge'
@@ -546,7 +577,7 @@ test_wizard_autonomous_mode_is_explicit() {
 
 test_help_does_not_cut_off_header() {
   SCENARIO=happy; make_fixture
-  HOME="$TMP/home" bash "$ROOT/fixbuddy.sh" --help > "$RUNLOG" 2>&1
+  HOME="$TMP/home" bash "$ROOT/fixbuddy" --help > "$RUNLOG" 2>&1
   RC=$?
   [ "$RC" -eq 0 ] || fail "help exit code $RC"
   assert_substr "$RUNLOG" 'cannot be removed from the CLI.'
@@ -557,13 +588,15 @@ make_install_fixture() {
   RUNLOG="$TMP/install.log"
   mkdir -p "$TMP/source/v0.7.1" "$TMP/source/v0.8.0" "$TMP/source/main" "$TMP/bin"
   for ref in v0.7.1 v0.8.0 main; do
-    cp "$ROOT/fixbuddy.sh" "$ROOT/fixbuddy-wizard.sh" "$TMP/source/$ref/"
+    cp "$ROOT/src/core.sh" "$TMP/source/$ref/fixbuddy.sh"
+    cp "$ROOT/src/wizard.sh" "$TMP/source/$ref/fixbuddy-wizard.sh"
   done
-  cp "$ROOT/fixbuddy-tui.py" "$TMP/source/v0.8.0/"
-  cp "$ROOT/fixbuddy-tui.py" "$TMP/source/main/"
+  cp "$ROOT/src/tui.py" "$TMP/source/v0.8.0/fixbuddy-tui.py"
+  cp "$ROOT/src/tui.py" "$TMP/source/main/fixbuddy-tui.py"
+  cp "$ROOT/fixbuddy" "$TMP/source/main/fixbuddy"
   ( cd "$TMP/source/v0.7.1" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh > SHA256SUMS )
   ( cd "$TMP/source/v0.8.0" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py > SHA256SUMS )
-  ( cd "$TMP/source/main" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py > SHA256SUMS )
+  ( cd "$TMP/source/main" && shasum -a 256 fixbuddy > SHA256SUMS )
   ln -s "$STUBS/curl" "$TMP/bin/curl"
 }
 
@@ -587,6 +620,27 @@ test_installer_tui_is_explicit() {
   [ -x "$TMP/installed/fixbuddy-tui.py" ] || fail "TUI not installed"
 }
 
+test_installer_local_is_one_file() {
+  make_install_fixture
+  bash "$ROOT/install.sh" --local --prefix "$TMP/installed" > "$RUNLOG" 2>&1
+  RC=$?
+  [ "$RC" -eq 0 ] || fail "local installer exit code $RC"
+  [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed"
+  [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "more than one file installed"
+  "$TMP/installed/fixbuddy" --version > "$RUNLOG" 2>&1
+  assert_substr "$RUNLOG" 'fixbuddy 0.9.0-dev'
+}
+
+test_installer_main_is_one_file() {
+  make_install_fixture
+  FIXBUDDY_INSTALL_FIXTURE="$TMP/source" PATH="$TMP/bin:$PATH" \
+    bash "$ROOT/install.sh" --ref main --prefix "$TMP/installed" > "$RUNLOG" 2>&1
+  RC=$?
+  [ "$RC" -eq 0 ] || fail "single-file ref installer exit code $RC"
+  [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed from ref"
+  [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "more than one file installed"
+}
+
 # ---------------- Runner ----------------
 
 TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
@@ -604,6 +658,8 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_fix_agent_branch_switch_cannot_push
        test_review_agent_branch_switch_cannot_push
        test_fetch_failure_blocks_before_fix test_verify_reads_fetched_base
+       test_mismatched_origin_causes_no_writes test_mismatched_push_destination_causes_no_writes
+       test_reviewer_cannot_redirect_push_destination
        test_stale_remote_branch_is_replaced_with_lease test_open_pr_remote_branch_is_not_replaced
        test_push_uses_reviewed_sha_when_branch_moves_late
        test_failed_pr_creation_preserves_replaced_remote_branch
@@ -614,7 +670,8 @@ TESTS=(test_happy_path test_false_positive test_review_reject test_check_gate
        test_json_preview_uses_core_queue test_json_preview_empty_queue
        test_wizard_autonomous_mode_is_explicit
        test_help_does_not_cut_off_header
-       test_installer_default_ref_stays_two_scripts test_installer_tui_is_explicit)
+       test_installer_default_ref_stays_two_scripts test_installer_tui_is_explicit
+       test_installer_local_is_one_file test_installer_main_is_one_file)
 
 # A named scenario runs alone for fast RED/GREEN cycles. With no argument the
 # complete offline suite runs, as in CI.

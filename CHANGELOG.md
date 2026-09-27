@@ -6,6 +6,8 @@ All notable changes to fixbuddy are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-27
+
 ### Fixed
 - Codex agent decisions now use `codex exec --output-last-message` instead of
   its full transcript. Duplicate markers in CLI logs can no longer falsely

@@ -57,7 +57,7 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 Install the single-file release on macOS or Linux (including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.1/install.sh | bash
 gh auth login
 fixbuddy
 ```

@@ -1046,7 +1046,7 @@ __FIXBUDDY_TUI_SOURCE_20260927_END__
 
 fixbuddy_wizard_source() { cat <<'__FIXBUDDY_WIZARD_SOURCE_20260927_END__'
 #!/usr/bin/env bash
-# fixbuddy wizard v0.9.1-dev — beginner-friendly launcher for fixbuddy
+# fixbuddy wizard v0.9.1 — beginner-friendly launcher for fixbuddy
 #
 # Walks a user through the required flags via interactive prompts, validates
 # prerequisites, shows a preview of the exact command, and then runs fixbuddy.
@@ -1079,7 +1079,7 @@ printf "%s" "${MAG}${BOLD}"
 cat <<'EOF'
 
   ╔═══════════════════════════════════════════════════╗
-  ║            fixbuddy wizard v0.9.1-dev             ║
+  ║              fixbuddy wizard v0.9.1               ║
   ║   Turn GitHub issues into reviewed PRs             ║
   ╚═══════════════════════════════════════════════════╝
 EOF
@@ -1394,7 +1394,7 @@ __FIXBUDDY_WIZARD_SOURCE_20260927_END__
 }
 
 fixbuddy_help_source() { cat <<'__FIXBUDDY_HELP_20260927_END__'
-fixbuddy v0.9.1-dev — two-agent issue fixing with independent review
+fixbuddy v0.9.1 — two-agent issue fixing with independent review
 
 Pipeline per issue:
   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -1481,7 +1481,7 @@ esac
 FIXBUDDY_EMBEDDED_HELP="$(fixbuddy_help_source)"
 
 #!/usr/bin/env bash
-# fixbuddy v0.9.1-dev — two-agent issue fixing with independent review
+# fixbuddy v0.9.1 — two-agent issue fixing with independent review
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -1536,7 +1536,7 @@ FIXBUDDY_EMBEDDED_HELP="$(fixbuddy_help_source)"
 #   filter), and a config-provided label/check/notify cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.9.1-dev"
+VERSION="0.9.1"
 
 # -------- Defaults --------
 REPO=""

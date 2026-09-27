@@ -4,6 +4,14 @@ All notable changes to fixbuddy are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- Codex agent decisions now use `codex exec --output-last-message` instead of
+  its full transcript. Duplicate markers in CLI logs can no longer falsely
+  reject a valid final approval; a missing final message, nonzero exit or
+  timeout cannot authorize a push. Raw output remains in the run log.
+
 ## [0.9.0] - 2026-09-27
 
 ### Added

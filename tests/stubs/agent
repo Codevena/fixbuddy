@@ -9,6 +9,15 @@ set -u
 
 name="$(basename "$0")"
 scenario="${FIXBUDDY_TEST_SCENARIO:-happy}"
+codex_final_file=""
+if [ "$name" = "codex" ]; then
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -o|--output-last-message) codex_final_file="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+fi
 
 # claude/codex receive the prompt on stdin; agy receives it as the value after
 # -p, with all other flags positioned before it.
@@ -32,6 +41,39 @@ case "$prompt" in
   *"independent senior code reviewer"*) stage="review" ;;
 esac
 
+# Codex's real CLI prints a transcript to stdout and writes its canonical
+# final response separately when --output-last-message is requested.
+if [ "$name" = "codex" ]; then
+  codex_capture="$(mktemp)"
+  exec 3>&1
+  exec > "$codex_capture"
+  codex_finish() {
+    local result=$?
+    trap - EXIT
+    if [ -n "$codex_final_file" ]; then
+      case "$scenario:$stage" in
+        codexmissing:review) : ;;  # requested file intentionally remains empty
+        codexverbose:review|reviewexitbad:review)
+          printf 'DONE-APPROVED\n' > "$codex_final_file" ;;
+        codexfinalreject:review)
+          printf 'DONE-REJECTED: the committed fix is insufficient\n' > "$codex_final_file" ;;
+        codexfixer:verify)
+          printf 'DONE-PROCEED\n' > "$codex_final_file" ;;
+        codexfixer:fix)
+          printf 'DONE-FIX-APPLIED\n' > "$codex_final_file" ;;
+        *) cp "$codex_capture" "$codex_final_file" ;;
+      esac
+      if [ -s "$codex_final_file" ] && [ -n "${FIXBUDDY_TEST_STAGELOG:-}" ]; then
+        printf 'codex-final:%s\n' "$(tail -n 1 "$codex_final_file")" >> "$FIXBUDDY_TEST_STAGELOG"
+      fi
+    fi
+    cat "$codex_capture" >&3
+    rm -f "$codex_capture"
+    exit "$result"
+  }
+  trap codex_finish EXIT
+fi
+
 [ -n "${FIXBUDDY_TEST_STAGELOG:-}" ] && echo "$name:$stage" >> "$FIXBUDDY_TEST_STAGELOG"
 if [ "$name" = "agy" ] && [ -n "${FIXBUDDY_TEST_AGYLOG:-}" ]; then
   echo "stage=$stage gh_token=${GH_TOKEN:-unset} args=$flags" >> "$FIXBUDDY_TEST_AGYLOG"
@@ -49,15 +91,38 @@ Closes #7" )
 }
 
 case "$scenario:$stage" in
-  happy:verify|reject:verify|check:verify|fixswitch:verify|reviewswitch:verify|reviewpushurl:verify|mixedverdict:verify|prefixverdict:verify|stale-open-pr:verify|pushrace:verify|pr-create-fail:verify)
+  happy:verify|reject:verify|check:verify|fixswitch:verify|reviewswitch:verify|reviewpushurl:verify|mixedverdict:verify|prefixverdict:verify|codexverbose:verify|codexmissing:verify|codexfinalreject:verify|reviewtimeoutfinal:verify|stale-open-pr:verify|pushrace:verify|pr-create-fail:verify)
     echo "Reproduced the problem. The issue is real."
     echo "DONE-PROCEED" ;;
-  happy:fix|reject:fix|check:fix|reviewswitch:fix|reviewpushurl:fix|mixedverdict:fix|prefixverdict:fix|reviewexitbad:fix|reviewcommitdirty:fix|stale-open-pr:fix|freshbase:fix|pushrace:fix|pr-create-fail:fix)
+  happy:fix|reject:fix|check:fix|reviewswitch:fix|reviewpushurl:fix|mixedverdict:fix|prefixverdict:fix|reviewexitbad:fix|reviewcommitdirty:fix|codexverbose:fix|codexmissing:fix|codexfinalreject:fix|reviewtimeoutfinal:fix|stale-open-pr:fix|freshbase:fix|pushrace:fix|pr-create-fail:fix)
     do_fix_commit
     echo "DONE-FIX-APPLIED" ;;
   happy:review|stale-open-pr:review|freshbase:review|pushrace:review|pr-create-fail:review)
     echo "Diff is correct, minimal, in scope."
     echo "DONE-APPROVED" ;;
+  codexverbose:review)
+    echo "Earlier transcript:"
+    echo "DONE-APPROVED"
+    echo "hook: Stop Completed"
+    echo "DONE-APPROVED" ;;
+  codexmissing:review|codexfinalreject:review)
+    echo "DONE-APPROVED" ;;
+  codexfixer:verify)
+    echo "DONE-FALSE-POSITIVE: stale transcript"
+    echo "DONE-PROCEED" ;;
+  codexfixer:fix)
+    do_fix_commit
+    echo "DONE-BLOCKED: stale transcript"
+    echo "DONE-FIX-APPLIED" ;;
+  codexfixer:review)
+    echo "DONE-APPROVED" ;;
+  reviewtimeoutfinal:review)
+    if [ -n "$codex_final_file" ]; then
+      printf 'DONE-APPROVED\n' > "$codex_final_file"
+      [ -z "${FIXBUDDY_TEST_STAGELOG:-}" ] || printf 'codex-final:DONE-APPROVED\n' >> "$FIXBUDDY_TEST_STAGELOG"
+    fi
+    echo "DONE-APPROVED"
+    sleep 20 ;;
   fixswitch:fix)
     ( cd "$project" && git checkout -q main && echo "rogue" >> src/app.txt \
       && git add src/app.txt && git commit -q -m "rogue base commit" )

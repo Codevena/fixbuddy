@@ -1,28 +1,39 @@
 # Next session
 
-## Local v0.9.2 release candidate — 2026-09-27 (not pushed)
+## Published v0.9.2 — 2026-09-27
 
-Branch `fix/closed-merged-issue-label` contains product commit `cc55978` and
-the prepared single-file v0.9.2 release. After a human merges a FixBuddy PR,
-the next write run inspects GitHub's **latest issue-closure event** and changes
-`fix:pr-open` to `fix:applied` only when its closer is a merged same-repository
-`fix/issue-N` PR. Historical merges, fork PRs, unclear API results and dry-run
-cannot relabel the issue. A controlled run of local `0.9.2-dev` against the
-private synthetic fixture changed its closed issue to `fix:applied` with no
-agent call or new PR. The published and locally installed version is still
-v0.9.1; the private fixture and remote fix branch remain.
+Product commit `cc55978` and release preparation `f86a4be` were merged via
+PR #17 as `d8025fb`. Shell, integration and Action-smoke jobs passed on the PR;
+the `main` CI on that exact merge commit passed (`36329015552`). Annotated tag
+`v0.9.2` and floating Action tag `v1` both resolve to `d8025fb`. The public
+non-draft, non-prerelease GitHub Release is latest and contains `fixbuddy` plus
+`SHA256SUMS`. Downloaded assets, the tagged tree and the pinned public
+installer produced the same executable (SHA256 `51d9d3a7…`). The installer
+placed one file in a temporary prefix and then updated
+`~/.local/bin/fixbuddy`; the installed command reports `fixbuddy 0.9.2`.
+
+After a human merges a FixBuddy PR, the next write run inspects GitHub's
+**latest issue-closure event** and changes `fix:pr-open` to `fix:applied` only
+when its closer is a merged same-repository `fix/issue-N` PR. Historical
+merges, fork PRs and unclear API responses leave the issue unchanged;
+`--dry-run` stays read-only. Before publication, one controlled run of the
+local `0.9.2-dev` candidate against the private synthetic fixture changed
+its closed issue to `fix:applied` without an agent call or new PR. The private
+fixture and remote fix branch remain available.
 
 Causal RED/GREEN cases, final offline integration **62/62**, terminal UI
 **17/17**, ShellCheck, Actionlint, syntax, deterministic bundle and SHA256
 checks passed. An independent post-review found two false-attribution WARNs;
 both were reproduced and fixed. The final delta review passed with
-0 CRITICAL/WARN. The untracked `review-todo.md` remains user-owned.
+0 CRITICAL/WARN. CodeRabbit on PR #17 had no posted finding but was still
+pending at the last check; do not restart the four older pending bot reviews.
+The untracked `review-todo.md` remains user-owned.
 
-Next: Markus reviews the local release candidate and decides whether to push,
-merge and publish v0.9.2. Inspect CodeRabbit on that next PR; do not restart
-the four older pending bot reviews. A private launch-test outline is in the
-Brain; no public post has been made. ScoutBuddy is under development in a
-separate session.
+Next: a private launch-test outline is in the Brain. Check the chosen
+community's current rules and account eligibility, then get Markus' approval
+for the exact public post; no post has been made. ScoutBuddy is under
+development in a separate session. Keep the synthetic fixture until Markus
+decides whether to retain it.
 
 ## Published v0.9.1 and live Issue→PR smoke — 2026-09-27
 
@@ -37,12 +48,12 @@ note, not in this public repository.
 
 PR #15 merged as `b20e89a` after its Shell, integration and Action-smoke checks
 passed. CI on the merge commit passed too (`36324802963`). Annotated tag
-`v0.9.1` and floating Action tag `v1` both resolve to `b20e89a`. The public
-non-draft, non-prerelease GitHub Release is latest and attaches the single
+`v0.9.1` and floating Action tag `v1` both resolved to `b20e89a` at publication.
+The public non-draft, non-prerelease GitHub Release attached the single
 `fixbuddy` executable plus `SHA256SUMS`; downloaded assets match the tagged
 tree byte-for-byte. The pinned public installer installed one matching file
-both in a temporary prefix and at `~/.local/bin/fixbuddy`, which reports
-`fixbuddy 0.9.1`.
+both in a temporary prefix and at `~/.local/bin/fixbuddy`, which reported
+`fixbuddy 0.9.1` at that time.
 
 The separately authorized second live run used the **publicly installed
 v0.9.1** against the same private synthetic issue. After removing the old

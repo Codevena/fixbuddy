@@ -4,7 +4,7 @@ All notable changes to fixbuddy are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased] - 0.8.0-dev
+## [0.8.0] - 2026-09-27
 
 ### Added
 - Optional Python 3 terminal UI with a read-only queue, run setup, issue
@@ -135,6 +135,7 @@ to existing flags.
 
 Predate this changelog. See the git history and the `v0.4.0` / `v0.3.2` tags.
 
+[0.8.0]: https://github.com/Codevena/fixbuddy/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/Codevena/fixbuddy/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Codevena/fixbuddy/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Codevena/fixbuddy/compare/v0.5.0...v0.6.0

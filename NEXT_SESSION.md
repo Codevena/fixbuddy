@@ -69,7 +69,7 @@ read-only-stage guards), both 2026-06-12.
 
 1. Bump `VERSION` in `fixbuddy.sh` (+ header), wizard header/banner,
    `install.sh` `DEFAULT_REF`, README one-liners; update `CHANGELOG.md`.
-2. Regenerate `SHA256SUMS` (`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh >
+2. Regenerate `SHA256SUMS` (`shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py >
    SHA256SUMS`) — `install.sh` verifies fail-closed.
 3. Merge via PR; then `git tag vX.Y.Z && git push origin vX.Y.Z` and
    `git tag -f v1 vX.Y.Z && git push origin v1 --force`.

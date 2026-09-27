@@ -57,15 +57,15 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 Install with the one-liner (macOS and Linux, including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash
 ```
 
-This downloads the pinned `v0.7.1` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
+This downloads the pinned `v0.8.0` scripts into `~/.local/bin` (or `/usr/local/bin`), makes them executable, and prints a PATH hint if needed. Override the location with `| bash -s -- --prefix /custom/bin` or track the latest commit with `--ref main`.
 
 **Prefer to read before you run?** The installer is short — inspect it first, then run it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.7.1/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh -o install.sh
 less install.sh        # read it
 bash install.sh        # then run it
 ```
@@ -80,8 +80,15 @@ Then run:
 fixbuddy-wizard.sh
 ```
 
-The optional terminal UI is available from the current source checkout. It
-uses Python 3 and no extra packages:
+To install the terminal UI as well, use Python 3 and pass `--with-tui`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.8.0/install.sh | bash -s -- --with-tui
+fixbuddy-tui.py --demo
+```
+
+The UI also runs directly from a source checkout and needs no extra Python
+packages:
 
 ```bash
 ./fixbuddy-tui.py --demo
@@ -95,9 +102,8 @@ requests a safe interrupt. Press `?` for shortcuts. The UI starts with
 auto-merge off even if an existing config file enables it; enable it explicitly
 in SETUP for that run.
 
-The pinned v0.7.1 install URL above remains a two-script release. Once a ref
-containing this UI is published, use the updated installer with `--with-tui`
-and that ref (for example `bash install.sh --ref main --with-tui`).
+The base installation stays Bash-only. `--with-tui` adds the checked Python
+program from the same pinned v0.8.0 release.
 
 ### Developer install
 

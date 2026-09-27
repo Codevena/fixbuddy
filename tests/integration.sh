@@ -555,12 +555,14 @@ test_help_does_not_cut_off_header() {
 make_install_fixture() {
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/fixbuddy-install-itest.XXXXXX")"
   RUNLOG="$TMP/install.log"
-  mkdir -p "$TMP/source/v0.7.1" "$TMP/source/main" "$TMP/bin"
-  for ref in v0.7.1 main; do
+  mkdir -p "$TMP/source/v0.7.1" "$TMP/source/v0.8.0" "$TMP/source/main" "$TMP/bin"
+  for ref in v0.7.1 v0.8.0 main; do
     cp "$ROOT/fixbuddy.sh" "$ROOT/fixbuddy-wizard.sh" "$TMP/source/$ref/"
   done
+  cp "$ROOT/fixbuddy-tui.py" "$TMP/source/v0.8.0/"
   cp "$ROOT/fixbuddy-tui.py" "$TMP/source/main/"
   ( cd "$TMP/source/v0.7.1" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh > SHA256SUMS )
+  ( cd "$TMP/source/v0.8.0" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py > SHA256SUMS )
   ( cd "$TMP/source/main" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py > SHA256SUMS )
   ln -s "$STUBS/curl" "$TMP/bin/curl"
 }
@@ -579,7 +581,7 @@ test_installer_default_ref_stays_two_scripts() {
 test_installer_tui_is_explicit() {
   make_install_fixture
   FIXBUDDY_INSTALL_FIXTURE="$TMP/source" PATH="$TMP/bin:$PATH" \
-    bash "$ROOT/install.sh" --ref main --with-tui --prefix "$TMP/installed" > "$RUNLOG" 2>&1
+    bash "$ROOT/install.sh" --with-tui --prefix "$TMP/installed" > "$RUNLOG" 2>&1
   RC=$?
   [ "$RC" -eq 0 ] || fail "TUI installer exit code $RC"
   [ -x "$TMP/installed/fixbuddy-tui.py" ] || fail "TUI not installed"

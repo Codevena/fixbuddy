@@ -1,26 +1,33 @@
 # Next session
 
-## Unreleased single-file candidate — 2026-09-27
+## Published v0.9.0 — 2026-09-27
 
-Local product commit `93b7b3a` contains a one-file `fixbuddy` command assembled from
-`src/core.sh`, `src/tui.py` and `src/wizard.sh` by `scripts/build.py`. Running
-it interactively opens an account-wide GitHub repository and open-issue view;
-`--wizard` and direct CLI flags retain the existing pipeline. The demo has
-been removed. `install.sh --local` installs only `fixbuddy`; the default
-published v0.8.0 installation path remains available. The Action points at
-the bundled command. A run now checks the selected repository against both
-origin fetch and push destinations before any writes.
+PR #13 merged to `main` as `7799e3e` after Shell, integration and Action-smoke
+checks passed. CI on the merge commit (`36316858413`) passed too. Annotated tag
+`v0.9.0` and the floating Action tag `v1` both resolve to that exact commit;
+the public GitHub Release is non-draft, non-prerelease and marked latest. It
+attaches the single `fixbuddy` executable and `SHA256SUMS`. Downloaded assets
+match the tagged workspace bytes. The pinned public installer fetched and
+checksum-verified one executable into a temporary prefix; it reported
+`fixbuddy 0.9.0`. `~/.local/bin/fixbuddy` is updated to the same version.
 
-This is a verified local candidate, not a published release. The final bundle
-passed 48/48 offline integration and 17/17 UI tests, ShellCheck, Actionlint,
-bundle and SHA256 checks; independent delta review found 0 CRITICAL/WARN. A
-read-only account inventory returned 114 repositories, 25 open issues and 0
-unknown. `bash install.sh --local` installed the candidate at
-`~/.local/bin/fixbuddy` and its checksum matched. `pd` still reports 0 open
-audit findings but an unknown review date/commit. Do not push or publish
-without an explicit current-task instruction; after publication verify CI and
-the public installer. No real agent write/PR smoke was performed. The untracked
-`review-todo.md` belongs to Markus and remains outside the product commit.
+The bundled command opens the account-wide repo/open-issue dashboard; `--wizard`
+and direct flags retain the existing pipeline. The demo mode was removed. The
+release passed 49/49 offline integration cases, 17/17 UI tests, ShellCheck,
+Actionlint, bundle and SHA256 checks, and independent release review with 0
+CRITICAL/WARN. The offline demo reached a real local branch push and stubbed
+PR/merge calls. VHS 0.12.0 on this Mac did not export a GIF even from a minimal
+tape, so the existing GIF remains and the generator now fails visibly and
+restores it. No live paid agent or real issue-to-PR run was performed.
+
+`pd` reports 0 open findings and now attributes the historical audit to
+2026-08-30 at `73e723b6f5ad` (HEAD differs, correctly). The untracked
+`review-todo.md` remains outside the product commits. The three previously
+installed v0.8.0 executables matched the published hashes and were moved to
+`~/.local/share/fixbuddy/legacy-v0.8.0/`; only `fixbuddy` remains in
+`~/.local/bin`. CodeRabbit's optional review on PR #13 was still pending at
+last check; inspect any later findings. The real agent/PR smoke still needs a
+separate controlled test issue and provider-cost authorization.
 
 ## Published v0.8.0 — 2026-09-27
 

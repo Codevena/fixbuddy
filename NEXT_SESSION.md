@@ -1,6 +1,28 @@
 # Next session
 
-## Current local state — 2026-09-27 (`0765617`, not pushed)
+## Published v0.8.0 — 2026-09-27
+
+PR #12 was merged to `main` as `f17d847`; its required Shell checks,
+integration job, and Action dry-run smoke passed. The `main` CI on that merge
+commit also passed (`36310626815`). Annotated tag `v0.8.0` and floating Action
+tag `v1` both resolve to `f17d847`. The non-draft, non-prerelease GitHub Release
+is published and marked latest; a fresh Marketplace response shows v0.8.0.
+
+The public pinned installer was fetched from `v0.8.0` and installed with
+`--with-tui` into a temporary prefix and then `~/.local/bin`; SHA256 checks
+matched all three scripts. The installed CLI prints `fixbuddy 0.8.0`; the
+installed TUI demo rendered and exited in an 80x24 PTY. A live read-only JSON
+dry-run against `Codevena/fixbuddy` returned base `main`, auto-merge `false`,
+and 0 actionable issues. Local `pd` reports `Audit: ● 0 offene Befunde` from
+the still-untracked `review-todo.md`. No billable agent run or live issue→PR
+pipeline was performed; use a controlled test issue in an owned repository for
+that separate smoke.
+
+The sections below are historical pre-release snapshots. CodeRabbit's optional
+PR review was still pending at the last check after merge; inspect any eventual
+findings before additional product changes.
+
+## Historical local state — 2026-09-27 (`0765617`, before publication)
 
 The seven logic findings in the 2026-08-30 `review-todo.md` are addressed in
 local commit `0765617`. The Bash pipeline checks branch/base state, fetches the

@@ -56,6 +56,7 @@ if [ ! -s "$gif" ]; then
   exit 1
 fi
 if ! grep -qx 'pr create' "$DEMO_GH_LOG" || ! grep -qx 'pr merge' "$DEMO_GH_LOG"; then
+  mv "$gif" "$WORK/incomplete-demo.gif"
   [ ! -f "$backup" ] || mv "$backup" "$gif"
   echo "demo did not complete the PR and auto-merge steps" >&2
   exit 1

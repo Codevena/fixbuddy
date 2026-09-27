@@ -25,3 +25,9 @@ bash docs/demo/gen.sh
 
 Requires `vhs` on `PATH`. Writes `docs/demo.gif`. Edit `demo.tape` to change the
 timing/size/theme.
+
+This GIF was rendered with the official VHS v0.11.0 macOS binary. On the Mac
+used for this release, VHS v0.12.0 returned success without writing media,
+even for a one-second minimal tape. `gen.sh` detects a missing GIF and restores
+the prior file. Until that VHS behavior is fixed, put v0.11.0 first on `PATH`
+when regenerating here.

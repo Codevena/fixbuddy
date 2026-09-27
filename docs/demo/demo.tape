@@ -11,9 +11,10 @@ Set Height 600
 Set Padding 24
 Set Theme "Dracula"
 Set TypingSpeed 35ms
+Set Framerate 25
 
 Sleep 600ms
 Type "fixbuddy --repo acme/calc --project /tmp/fixbuddy-demo/playground --yes --auto-merge"
 Sleep 500ms
 Enter
-Sleep 25s
+Sleep 45s

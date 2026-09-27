@@ -1,31 +1,44 @@
 # Next session
 
-## Local v0.9.1-dev follow-up — 2026-09-27 (not pushed)
+## Published v0.9.1 and live Issue→PR smoke — 2026-09-27
 
-One authorized Issue→PR smoke in a **private synthetic test repository** ran
-Claude VERIFY and FIX, then a passing Python check. Codex reviewed and approved
-the committed change, but its stdout transcript repeated `DONE-APPROVED`.
-FixBuddy's strict one-marker parser correctly rejected the ambiguous stream:
-the issue is now labeled `fix:rejected`; no PR, remote fix branch or merge was
-created. Exactly one real provider run was used; no automatic retry followed.
-Keep the private repository and issue identifiers in the private Brain note,
-not in this public repository.
+An initial authorized run in a **private synthetic test repository** reached a
+passing fix check and Codex approval, but Codex stdout repeated
+`DONE-APPROVED` in its transcript. FixBuddy v0.9.0 failed closed, labeled the
+issue `fix:rejected` and opened no PR. The adapter fix in `21db76b` now uses
+Codex's canonical `--output-last-message` for decisions while retaining raw
+output in the log; missing final messages, nonzero exits and timeouts stay
+blocked. Keep private repository and issue identifiers in the private Brain
+note, not in this public repository.
 
-Local branch `fix/codex-final-message` contains product commit `21db76b`
-(`0.9.1-dev`). It uses Codex's `--output-last-message` for the decision while
-preserving raw CLI output in the log and failing closed on missing final
-messages, nonzero exits and timeouts. Causal RED then focused GREEN 9/9,
-complete offline integration 54/54, terminal UI 17/17, ShellCheck, Actionlint,
-syntax, bundle and SHA256 checks passed; independent post-review reported
-0 CRITICAL/WARN. The installed/public `fixbuddy 0.9.0`, `main`, `v1` and
-`v0.9.0` remain unchanged. The untracked `review-todo.md` is user-owned.
+PR #15 merged as `b20e89a` after its Shell, integration and Action-smoke checks
+passed. CI on the merge commit passed too (`36324802963`). Annotated tag
+`v0.9.1` and floating Action tag `v1` both resolve to `b20e89a`. The public
+non-draft, non-prerelease GitHub Release is latest and attaches the single
+`fixbuddy` executable plus `SHA256SUMS`; downloaded assets match the tagged
+tree byte-for-byte. The pinned public installer installed one matching file
+both in a temporary prefix and at `~/.local/bin/fixbuddy`, which reports
+`fixbuddy 0.9.1`.
 
-Next: review the local patch and decide on publication. A second live
-Claude/Codex run requires a separate cost decision; if authorized, first
-reconcile the synthetic issue's `fix:rejected` label and then run the exact
-`--issue 1 --max 1 --max-retries 0 --no-auto-merge` scenario against the
-private fixture with the locally built bundle. The second scanning app is
-planning-only in this session; implementation belongs in a new session.
+The separately authorized second live run used the **publicly installed
+v0.9.1** against the same private synthetic issue. After removing the old
+`fix:rejected` label, its dry-run selected exactly that issue with auto-merge
+off. Claude verified and fixed it, the Python check passed, Codex approved,
+and FixBuddy opened one private PR. The PR has one commit and changes only the
+intended `src/calc.py` line; the Python test passed on the fetched PR commit.
+The issue is labeled `fix:pr-open`; the PR remains open and unmerged, and the
+local test checkout is clean on `main`. No further provider retry occurred.
+
+Offline verification: causal RED and focused GREEN 9/9, integration 54/54,
+TUI 17/17, ShellCheck, Actionlint, syntax, bundle/SHA256 checks, manual
+Gitleaks scan of the three release commits, and independent post-review with
+0 CRITICAL/WARN. CodeRabbit's optional PR #15 review was pending at last
+check. The untracked `review-todo.md` is user-owned and unchanged.
+
+Next: leave the private PR unmerged for Markus to inspect; later clean up the
+private test fixture only with an explicit decision. Inspect any later
+CodeRabbit findings. ScoutBuddy is a separate planned app, to be implemented
+in another session.
 
 ## Published v0.9.0 — 2026-09-27
 

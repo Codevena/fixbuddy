@@ -28,14 +28,16 @@ OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 SEVERITIES = ("all", "critical", "high", "medium", "low")
 AGENTS = ("claude", "codex", "opencode", "agy")
 TABS = ("QUEUE", "SETUP", "RUN")
-LOGO = (
-    "██████╗ ██████╗ ",
-    "██╔═══╝ ██╔══██╗",
-    "█████╗   ██████╔╝",
-    "██╔══╝   ██╔══██╗",
-    "██║      ██████╔╝",
-    "╚═╝      ╚═════╝ ",
-)
+WORDMARK = "FIX BUDDY"
+PIXEL_GLYPHS = {
+    "F": ("█████", "██   ", "████ ", "██   ", "██   "),
+    "I": ("█████", "  █  ", "  █  ", "  █  ", "█████"),
+    "X": ("██ ██", " ███ ", "  █  ", " ███ ", "██ ██"),
+    "B": ("████ ", "██ ██", "████ ", "██ ██", "████ "),
+    "U": ("██ ██", "██ ██", "██ ██", "██ ██", "█████"),
+    "D": ("████ ", "██ ██", "██ ██", "██ ██", "████ "),
+    "Y": ("██ ██", "██ ██", " ███ ", "  █  ", "  █  "),
+}
 
 
 def clean_display(value: str) -> str:
@@ -232,7 +234,7 @@ class TerminalApp:
         if curses.COLORS >= 256:
             colors = {
                 "text": (255, -1), "muted": (103, -1), "violet": (141, -1),
-                "pink": (205, -1), "green": (48, -1), "amber": (215, -1),
+                "pink": (205, -1), "magenta": (171, -1), "green": (48, -1), "amber": (215, -1),
                 "red": (203, -1), "line": (61, -1), "header": (255, 54),
                 "badge": (255, 205), "select": (255, 60), "footer": (255, 235),
             }
@@ -240,6 +242,7 @@ class TerminalApp:
             colors = {
                 "text": (curses.COLOR_WHITE, -1), "muted": (curses.COLOR_CYAN, -1),
                 "violet": (curses.COLOR_MAGENTA, -1), "pink": (curses.COLOR_MAGENTA, -1),
+                "magenta": (curses.COLOR_MAGENTA, -1),
                 "green": (curses.COLOR_GREEN, -1), "amber": (curses.COLOR_YELLOW, -1),
                 "red": (curses.COLOR_RED, -1), "line": (curses.COLOR_BLUE, -1),
                 "header": (curses.COLOR_WHITE, curses.COLOR_MAGENTA),
@@ -358,37 +361,52 @@ class TerminalApp:
 
     def draw_header(self, screen: curses.window, width: int) -> None:
         self.put(screen, 0, 0, " " * width, "header")
-        self.put(screen, 0, 1, " FB ", "badge", True)
-        self.put(screen, 0, 6, " FIXBUDDY ", "header", True)
-        x = 20
+        self.put(screen, 0, 1, " ◈ ", "badge", True)
+        self.put(screen, 0, 6, " FIX BUDDY ", "header", True)
+        if width < 60:
+            self.put(screen, 0, width - 11, f" {self.tab + 1}/3 {TABS[self.tab]} ", "header", True)
+            return
+        x = 24
         for index, label in enumerate(TABS):
-            if x + len(label) + 3 >= width - 15:
+            if x + len(label) + 3 >= width - 3:
                 break
             self.put(screen, 0, x, f" {index + 1} {label} ", "badge" if index == self.tab else "header", index == self.tab)
             x += len(label) + 5
-        if width >= 90:
+        if width >= 105:
             repo = clean_display(self.settings.repo or "set repository")
             self.put(screen, 0, max(x + 2, width - 30), clip_cells(repo, min(27, width - x - 3)), "header")
 
     def draw_hero(self, screen: curses.window, width: int, height: int) -> int:
         if height < 23:
-            self.put(screen, 2, 2, "VERIFY  →  FIX  →  REVIEW  →  PR", "violet", True)
+            self.put(screen, 2, 2, "◈ FIX BUDDY  ·  VERIFY → FIX → REVIEW → PR", "pink", True)
             return 4
+        if width < 76:
+            self.put(screen, 2, 3, "◈ FIX BUDDY", "pink", True)
+            self.put(screen, 4, 3, f"{len(self.issues):03d} actionable  ·  {len(self.selected):03d} selected", "text", True)
+            self.put(screen, 6, 3, "VERIFY  →  FIX  →  REVIEW  →  PR", "violet", True)
+            return 9
         logo_x = 3
-        for row, line in enumerate(LOGO):
-            self.put(screen, row + 2, logo_x, line[:8], "violet", True)
-            self.put(screen, row + 2, logo_x + 8, line[8:], "pink", True)
-        x = 26 if width >= 62 else 22
+        glyph_index = 0
+        for letter in WORDMARK:
+            if letter == " ":
+                logo_x += 3
+                continue
+            color = "violet" if glyph_index < 2 else "magenta" if glyph_index < 5 else "pink"
+            for row, pixels in enumerate(PIXEL_GLYPHS[letter]):
+                self.put(screen, row + 2, logo_x, pixels, color, True)
+            logo_x += 6
+            glyph_index += 1
+        x = 56 if width < 105 else 62
         self.put(screen, 2, x, "ISSUES IN VIEW", "muted", True)
         self.put(screen, 3, x, f"{len(self.issues):03d}  actionable", "text", True)
         self.put(screen, 4, x, f"{len(self.selected):03d}  selected", "pink", True)
-        self.put(screen, 6, x, "VERIFY  →  FIX  →  REVIEW  →  PR", "violet", True)
-        if width >= 95:
+        self.put(screen, 8, 3, "VERIFY  →  FIX  →  REVIEW  →  PR", "violet", True)
+        if width >= 110:
             self.put(screen, 3, width - 29, "MERGE POLICY", "muted", True)
             self.put(screen, 4, width - 29,
                      "AUTO-MERGE ON" if self.settings.auto_merge else "HUMAN MERGE",
                      "amber" if self.settings.auto_merge else "green", True)
-        return 9
+        return 10
 
     def draw_queue(self, screen: curses.window, width: int, height: int, top: int) -> None:
         left, right = panel_widths(width)

@@ -100,6 +100,7 @@ class TerminalUiTests(unittest.TestCase):
                         if process.poll() is not None:
                             break
                     self.assertTrue(sent_quit, data[-500:])
+                    self.assertIn(b"FIX BUDDY", data)
                     self.assertEqual(process.wait(timeout=2), 0, data[-500:])
                 finally:
                     if process.poll() is None:

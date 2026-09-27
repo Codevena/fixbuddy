@@ -30,6 +30,16 @@ decide whether to publish the candidate. Pushing or releasing requires an
 explicit instruction; after publication, verify CI and the installer against
 the published ref. The older snapshot below describes the prior v0.7.1 state.
 
+### Follow-up 2026-09-27 — full Fix Buddy wordmark
+
+The TUI header now spells out `FIX BUDDY`. Commit `380c30d` adds a five-row
+violet-to-pink block wordmark at normal widths and a compact mark on narrow
+terminals. The 10 TUI tests (including 40- and 120-column PTYs), the focused
+TUI installer smoke, SHA256 checks, and staged Gitleaks scan passed. Local
+`main` remains ahead of `origin/main`; there has still been no push,
+release, or installation. The untracked `review-todo.md` remains untouched by
+this visual follow-up.
+
 **v0.7.1 is released** (2026-06-13): the GitHub Action gains a `notify-cmd`
 input (newline-separated — shell commands may contain commas). PR #11.
 Released earlier: v0.7.0 (`--notify-cmd` hook) and v0.6.0 (agy migration +

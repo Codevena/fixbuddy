@@ -764,7 +764,7 @@ test_installer_local_is_one_file() {
   [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed"
   [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "more than one file installed"
   "$TMP/installed/fixbuddy" --version > "$RUNLOG" 2>&1
-  assert_substr "$RUNLOG" 'fixbuddy 0.9.2'
+  assert_substr "$RUNLOG" "$(bash "$ROOT/fixbuddy" --version)"
 }
 
 test_installer_main_is_one_file() {

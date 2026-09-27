@@ -54,7 +54,7 @@
 #   filter), and a config-provided label/check/notify cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.9.2"
+VERSION="0.9.3-dev"
 
 # -------- Defaults --------
 REPO=""

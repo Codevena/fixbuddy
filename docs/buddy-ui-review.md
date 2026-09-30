@@ -1,6 +1,10 @@
 # Buddy-family terminal preview
 
-Local candidate: 0.9.3-dev. Public installer remains pinned to v0.9.2.
+Release candidate: 0.9.3. The installer is pinned to v0.9.3.
+
+## Historical preview — product commit `3a637e4`
+
+The local preview used 0.9.3-dev while the public installer was pinned to v0.9.2.
 The updated activity panel, animation and timestamped wrapped session history
 use the ScoutBuddy visual vocabulary, with no runtime dependency on it.
 Existing preview/selection/confirmation, merge policy and interruption commands
@@ -28,4 +32,7 @@ Release preparation updates the version and installer pins to stable v0.9.3,
 with no additional behavior change, and rebuilds the single-file bundle.
 All five focused offline installer cases pass, including the explicit v0.8
 paths, as do Bash syntax, deterministic bundle, checksum and diff checks.
-The final complete integration/UI suites and publication checks are pending.
+The final complete suites passed: 35 Python UI tests and 62 offline integration
+cases. ShellCheck, actionlint, bundle consistency and checksum verification also
+passed. GitHub PR #19 passed shell checks, integration tests and the Action
+dry-run wrapper smoke test. Release publication is the next step.

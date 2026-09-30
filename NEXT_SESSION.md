@@ -1,6 +1,23 @@
 # Next session
 
-## Local v0.9.3 release candidate — 2026-09-30
+## Local classic Buddy RUN — 2026-09-30
+
+Current development version: 0.9.4-dev on `feat/classic-buddy-run`, based on
+the published v0.9.3 merge `aa66a57`. RUN now matches ScoutBuddy's approved
+classic layout: full wordmark, Buddy summary and workflow panels, original
+animated face in the activity strip, and `d` to toggle the complete log.
+Summary metadata is captured from the approved run, not mutable setup fields;
+process completion never claims that a fix or merge succeeded.
+
+The Bash pipeline differs only in its version. Run/merge confirmation and
+interruption behavior stay unchanged. The public installer remains pinned to
+v0.9.3. This local UI update has not been pushed or released. The user-owned
+`review-todo.md` in the main checkout is unchanged.
+
+The release-candidate section below is historical: PR #19 was already merged
+and v0.9.3 published before this new local adaptation.
+
+## Historical v0.9.3 release candidate — 2026-09-30
 
 Buddy-family terminal changes are in product commit `3a637e4`, based on the
 published v0.9.2 state. Release preparation sets the core, wizard and pinned

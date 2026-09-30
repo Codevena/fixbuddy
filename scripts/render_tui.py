@@ -49,6 +49,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--view', choices=('repos', 'issues', 'setup', 'run'), default='run')
     parser.add_argument('--busy', action='store_true')
+    parser.add_argument('--details', action='store_true')
     parser.add_argument('--outcome', choices=('finished', 'stopped'))
     parser.add_argument('--output', type=Path, default=ROOT / 'docs' / 'screenshots')
     args = parser.parse_args()
@@ -61,6 +62,7 @@ def main():
         tui.RepoRecord('example/typescript-demo', False, False, True, status='ok')]
     app.rebuild_issue_list()
     app.tab = ('repos', 'issues', 'setup', 'run').index(args.view)
+    app.run_details = args.details
     app.phrase_offset = 0
     app.notice = 'Synthetic preview · inventory ready · g checks and confirms a run'
     app.append_activity('2 repositories · 1 open issue · read-only inventory ready')
@@ -68,6 +70,9 @@ def main():
     if args.busy:
         app.process = object()
         app.run_started = 100
+        app.run_info = {'repo': app.settings.repo, 'numbers': [7],
+                        'fix_agent': app.settings.fix_agent, 'review_agent': app.settings.review_agent,
+                        'auto_merge': app.settings.auto_merge}
         app.notice = 'Pipeline running · x to interrupt safely'
         app.append_activity('Synthetic pipeline progress · review in progress')
     if args.outcome:
@@ -107,7 +112,7 @@ def main():
                 draw.text((left, top), char, font=emoji_font if char == '😱' else font,
                           fill=xterm(foreground), embedded_color=char == '😱' and emoji_path.is_file())
                 offset += cells
-        state = args.outcome or ('busy' if args.busy else args.view)
+        state = ('details-' if args.details else '') + (args.outcome or ('busy' if args.busy else args.view))
         destination = args.output / f'tui-{state}-{width}.png'
         result.save(destination)
         print(destination)

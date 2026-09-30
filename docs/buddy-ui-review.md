@@ -1,6 +1,18 @@
 # Buddy-family terminal preview
 
-Release candidate: 0.9.3. The installer is pinned to v0.9.3.
+Local UI: 0.9.4-dev. The public installer remains pinned to released v0.9.3.
+
+## Classic RUN refinement — 2026-09-30
+
+Matches the user's accepted ScoutBuddy layout: full wordmark, two panels and
+the original animated face below. RUN presents a summary of its approved
+repository/issues/agents/merge policy; `d` shows the full timestamped log.
+Later SETUP edits do not rewrite that displayed approval, and elapsed time
+stops on the observed process exit. Success remains neutral process completion.
+
+Verification: 37 offline Python UI tests including PTY, standalone bundle,
+ShellCheck/syntax/checksum checks and synthetic 40x12/76/120-column renders.
+No live fixing/model calls or GitHub writes; the Bash pipeline only changes version.
 
 ## Historical preview — product commit `3a637e4`
 

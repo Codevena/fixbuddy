@@ -80,7 +80,11 @@ repository. No checkout is required just to browse the read-only inventory.
 The keyboard tabs are **[1] REPOS · [2] ISSUES · [3] SETUP · [4] RUN**.
 A bottom **ACTIVITY** panel keeps recent timestamped events visible in every
 view. While the inventory or pipeline is running, Buddy animates with the real
-elapsed time. The **RUN** view wraps the last 1,500 session events; use
+elapsed time. **RUN** uses the same classic two-panel layout as ScoutBuddy:
+the approved repository, issues, agents and merge choice on the left, workflow
+shortcuts on the right, and the familiar `(o.o)` face in the activity strip.
+Press **d** for the full log, or **d** again for the Buddy view.
+The log wraps the last 1,500 session events; use
 **↑/↓**, **PgUp/PgDn**, **Home** and **End** to browse or follow the latest event.
 Recognizable credentials are withheld from this bounded display history.
 It stays in memory; the Bash pipeline's existing run logs remain under

@@ -6,6 +6,12 @@ All notable changes to fixbuddy are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- RUN uses ScoutBuddy's classic Buddy summary and workflow panels, with the
+  original animated face in the activity strip and `d` for the complete log.
+- Run details retain the approved repository, issue selection, agents and merge
+  mode even if settings are edited afterwards. Elapsed time stops at process exit.
+
 ## [0.9.3] - 2026-09-30
 
 ### Added

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy wizard v0.9.2 — beginner-friendly launcher for fixbuddy
+# fixbuddy wizard v0.9.3 — beginner-friendly launcher for fixbuddy
 #
 # Walks a user through the required flags via interactive prompts, validates
 # prerequisites, shows a preview of the exact command, and then runs fixbuddy.
@@ -32,7 +32,7 @@ printf "%s" "${MAG}${BOLD}"
 cat <<'EOF'
 
   ╔═══════════════════════════════════════════════════╗
-  ║              fixbuddy wizard v0.9.2               ║
+  ║              fixbuddy wizard v0.9.3               ║
   ║   Turn GitHub issues into reviewed PRs             ║
   ╚═══════════════════════════════════════════════════╝
 EOF

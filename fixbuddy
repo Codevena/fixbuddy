@@ -16,6 +16,7 @@ import curses
 import json
 import os
 import queue
+import random
 import re
 import signal
 import subprocess
@@ -35,6 +36,22 @@ SEVERITIES = ("all", "critical", "high", "medium", "low")
 AGENTS = ("claude", "codex", "opencode", "agy")
 TABS = ("REPOS", "ISSUES", "SETUP", "RUN")
 WORDMARK = "FIX BUDDY"
+BUDDY_PHRASES = (
+    "Putting on my tiny debugging hat.",
+    "Checking behind the semicolons.",
+    "Fetching coffee for the neurons.",
+    "One careful step at a time.",
+    "Thinking hard. Looking adorable.",
+    "Asking the bugs to form an orderly queue.",
+)
+ACTIVITY_SECRETS = re.compile(
+    r"-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----"
+    r"|\b(?:gh[pousr]_|github_pat_|sk-(?:or-v1-)?)[A-Za-z0-9_-]{4,}"
+    r"|\bAKIA[A-Z0-9]{16}\b"
+    r"|\b(?:api[_-]?key|api[_-]?token|access[_-]?token|secret|password|"
+    r"aws_secret_access_key|private_key|authorization)\s*[=:]\s*\S+",
+    re.IGNORECASE,
+)
 PIXEL_GLYPHS = {
     "F": ("█████", "██   ", "████ ", "██   ", "██   "),
     "I": ("█████", "  █  ", "  █  ", "  █  ", "█████"),
@@ -119,7 +136,7 @@ def github_api(endpoint: str) -> str:
     result = subprocess.run(["gh", "api", "--paginate", "--slurp", endpoint],
                             capture_output=True, text=True, timeout=30, check=False)
     if result.returncode != 0:
-        raise RuntimeError(clean_display(result.stderr.strip() or "GitHub API request failed")[:240])
+        raise RuntimeError(activity_message(result.stderr.strip() or "GitHub API request failed")[:240])
     return result.stdout
 
 
@@ -149,7 +166,7 @@ def load_catalog(
                 repo.status = "ok"
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                 repo.status = "error"
-                repo.error = clean_display(str(error))[:160]
+                repo.error = activity_message(str(error))[:160]
             if on_progress:
                 on_progress("repo", repo)
     return repos
@@ -165,7 +182,7 @@ def catalog_worker_main() -> int:
         print(json.dumps({"type": "done"}), flush=True)
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-        print(json.dumps({"type": "error", "message": clean_display(str(error))[:200]}), flush=True)
+        print(json.dumps({"type": "error", "message": activity_message(str(error))[:200]}), flush=True)
         return 1
 
 
@@ -173,7 +190,7 @@ def repo_from_event(data: dict[str, Any]) -> RepoRecord:
     issues = [IssueRecord(**issue) for issue in data.get("issues", [])]
     return RepoRecord(data["full_name"], bool(data["private"]), bool(data["archived"]),
                       bool(data["has_issues"]), data["status"], issues,
-                      str(data.get("error") or ""))
+                      activity_message(data.get("error") or ""))
 
 
 def clean_display(value: str) -> str:
@@ -184,6 +201,36 @@ def clean_display(value: str) -> str:
         for char in value
         if char in "\r\n\t" or unicodedata.category(char) not in {"Cc", "Cf", "Cs"}
     )
+
+
+def activity_message(value: str) -> str:
+    """Withhold recognizable credentials before truncating session-only text."""
+    value = str(value)
+    if len(value) > 16384:
+        return "Activity message withheld: input too large."
+    if ACTIVITY_SECRETS.search(value):
+        return "Activity message withheld: possible credential."
+    value = clean_display(value)
+    if ACTIVITY_SECRETS.search(value):
+        return "Activity message withheld: possible credential."
+    return " ".join(value.split())[:400]
+
+
+def wrap_activity(entries: list[str], width: int) -> list[str]:
+    """Wrap whole history, including unbroken tokens, without losing characters."""
+    width = max(1, width)
+    lines = []
+    for entry in entries:
+        line, used = "", 0
+        for char in entry:
+            cells = display_width(char)
+            if used + cells > width and line:
+                lines.append(line)
+                line, used = "", 0
+            line += char
+            used += cells
+        lines.append(line)
+    return lines
 
 
 def display_width(value: str) -> int:
@@ -328,7 +375,7 @@ def _wrap(text: str, width: int, limit: int) -> list[str]:
 
 
 class TerminalApp:
-    def __init__(self, script: Path, settings: Settings):
+    def __init__(self, script: Path, settings: Settings, *, clock=None, wall_clock=None):
         self.script = script
         self.settings = settings
         self.self_path = Path(os.environ.get("FIXBUDDY_SELF") or __file__).resolve()
@@ -356,6 +403,41 @@ class TerminalApp:
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.catalog_process: subprocess.Popen[str] | None = None
         self.colors: dict[str, int] = {}
+        self.clock = clock or time.monotonic
+        self.wall_clock = wall_clock or time.time
+        self.run_started = None
+        self.catalog_started = None
+        self.outcome_effect = None
+        self.phrase_offset = random.randrange(len(BUDDY_PHRASES))
+        self.content_bottom = None
+        self._log_revision = 0
+        self._history_cache = (None, [])
+
+    def append_activity(self, message: str) -> None:
+        stamp = time.strftime('%H:%M:%S', time.localtime(self.wall_clock()))
+        self.logs.append(f'{stamp}  {activity_message(message)}')
+        self.logs = self.logs[-1500:]
+        self._log_revision += 1
+
+    def history_lines(self, width: int) -> list[str]:
+        key = (width, self._log_revision, len(self.logs))
+        if self._history_cache[0] != key:
+            self._history_cache = (key, wrap_activity(self.logs, width))
+        return self._history_cache[1]
+
+    def busy_status(self):
+        if self.process is not None and self.run_exit is None:
+            return 'Pipeline running', self.run_started
+        if self.catalog_loading:
+            return 'Loading GitHub inventory', self.catalog_started
+        return None
+
+    def current_outcome(self):
+        effect = self.outcome_effect
+        if effect and 0 <= self.clock() - effect['started'] < 4.5:
+            return effect
+        return None
+
     def rebuild_issue_list(self) -> None:
         records = [issue for repo in self.catalog if repo.status == "ok"
                    and (self.issue_filter_repo is None or repo.full_name == self.issue_filter_repo)
@@ -400,6 +482,8 @@ class TerminalApp:
             return
         self.catalog_generation += 1
         self.catalog_loading = True
+        self.catalog_started = self.clock()
+        self.outcome_effect = None
         self.catalog_error = None
         self.catalog = []
         self.repo_cursor = 0
@@ -409,6 +493,7 @@ class TerminalApp:
         self.preview_key = None
         self.actionable_order = []
         self.notice = "Loading GitHub repositories and open issues…"
+        self.append_activity(self.notice)
         try:
             self.catalog_process = subprocess.Popen(
                 [str(self.self_path), "--catalog-worker"],
@@ -417,8 +502,9 @@ class TerminalApp:
             )
         except OSError as error:
             self.catalog_loading = False
-            self.catalog_error = clean_display(str(error))[:180]
+            self.catalog_error = activity_message(str(error))[:180]
             self.notice = f"GitHub inventory failed: {self.catalog_error}"
+            self.append_activity(self.notice)
             return
         threading.Thread(target=self._catalog_reader,
                          args=(self.catalog_process,), daemon=True).start()
@@ -431,7 +517,7 @@ class TerminalApp:
             except ValueError:
                 self.events.put(("catalog", {"type": "error", "message": "Invalid inventory response"}))
         stderr = process.stderr.read() if process.stderr is not None else ""
-        self.events.put(("catalog_exit", (process.wait(), clean_display(stderr)[:200])))
+        self.events.put(("catalog_exit", (process.wait(), activity_message(stderr)[:200])))
 
     def invalidate_preview(self) -> None:
         self.selected.clear()
@@ -466,11 +552,15 @@ class TerminalApp:
             curses.init_pair(index, foreground, background)
             self.colors[name] = curses.color_pair(index)
 
-    def put(self, screen: curses.window, y: int, x: int, text: str, style: str = "text", bold: bool = False) -> None:
-        height, width = screen.getmaxyx()
-        if y < 0 or y >= height or x < 0 or x >= width:
+    def put(self, screen: curses.window, y: int, x: int, text: str, style: str = "text", bold: bool = False,
+            width=None) -> None:
+        height, columns = screen.getmaxyx()
+        if (y < 0 or y >= height or x < 0 or x >= columns or
+                (self.content_bottom is not None and y >= self.content_bottom)):
             return
-        text = clip_cells(text, width - x)
+        text = clip_cells(text, columns - x if width is None else min(width, columns - x))
+        if not text:
+            return
         try:
             screen.addstr(y, x, text, self.colors.get(style, 0) | (curses.A_BOLD if bold else 0))
         except curses.error:
@@ -484,7 +574,7 @@ class TerminalApp:
         for row in range(y + 1, y + height - 1):
             self.put(screen, row, x, "│", "line")
             self.put(screen, row, x + width - 1, "│", "line")
-        self.put(screen, y, x + 2, f" {title} ", "pink", True)
+        self.put(screen, y, x + 2, f" {title} ", "pink", True, width - 4)
 
     def refresh_run_preview(self, screen: curses.window) -> bool:
         identity = (settings_key(self.settings), self.catalog_generation)
@@ -505,6 +595,7 @@ class TerminalApp:
             self.notice = "The selected repository has no complete issue snapshot"
             return False
         self.notice = "Checking the selected repository without writes…"
+        self.append_activity(self.notice)
         self.draw(screen)
         screen.refresh()
         try:
@@ -513,7 +604,7 @@ class TerminalApp:
                 capture_output=True, text=True, timeout=45, check=False,
             )
             if result.returncode != 0:
-                raise RuntimeError(clean_display(result.stderr.strip() or result.stdout.strip())[:240])
+                raise RuntimeError(activity_message(result.stderr.strip() or result.stdout.strip())[:240])
             data = json.loads(result.stdout)
             if data.get("repo") != self.settings.repo or data.get("project") != self.settings.project:
                 raise RuntimeError("preview settings did not match the requested repository/checkout")
@@ -528,10 +619,12 @@ class TerminalApp:
             self.actionable_count = len(numbers)
             self.preview_key = identity
             self.notice = f"{len(numbers)} actionable issue(s) · read-only check passed"
+            self.append_activity(self.notice)
             return True
         except (OSError, ValueError, subprocess.TimeoutExpired, RuntimeError) as error:
             self.invalidate_preview()
-            self.notice = f"Preview failed: {clean_display(str(error))[:200]}"
+            self.notice = f"Preview failed: {activity_message(str(error))[:200]}"
+            self.append_activity(self.notice)
             return False
 
     def _reader(self, process: subprocess.Popen[str]) -> None:
@@ -564,22 +657,27 @@ class TerminalApp:
                     total_repos, total_issues, errors = catalog_totals(self.catalog)
                     self.notice = f"{total_repos} repos · {total_issues} open issues" + \
                         (f" · {errors} unknown" if errors else "")
+                    self.append_activity(self.notice)
                 elif event_type == "error":
                     self.catalog_loading = False
-                    self.catalog_error = clean_display(value.get("message", "unknown error"))
+                    self.catalog_error = activity_message(value.get("message", "unknown error"))
                     self.notice = f"GitHub inventory failed: {self.catalog_error}"
+                    self.append_activity(self.notice)
             elif kind == "catalog_exit":
                 rc, error = value
                 if rc != 0 and self.catalog_loading:
                     self.catalog_loading = False
-                    self.catalog_error = error or "unknown error"
+                    self.catalog_error = activity_message(error or "unknown error")
                     self.notice = f"GitHub inventory stopped: {self.catalog_error}"
+                    self.append_activity(self.notice)
             elif kind == "line":
-                self.logs.append(value)
-                self.logs = self.logs[-1500:]
-            elif kind == "exit":
-                self.run_exit = int(value)
-                self.notice = f"Run finished · exit {self.run_exit} · inspect logs below"
+                self.append_activity(value)
+            elif kind == "exit" and type(value) is int and self.process is not None:
+                self.run_exit = value
+                self.outcome_effect = {'exit': value, 'started': self.clock()}
+                result = 'Run finished' if value == 0 else 'Run stopped'
+                self.notice = f"{result} · exit {self.run_exit} · review the summary in RUN"
+                self.append_activity(self.notice)
 
     def start_run(self) -> None:
         if self.preview_key != (settings_key(self.settings), self.catalog_generation) \
@@ -598,34 +696,39 @@ class TerminalApp:
                 text=True, bufsize=1,
             )
         except OSError as error:
-            self.notice = f"Could not start: {clean_display(str(error))}"
+            self.notice = f"Could not start: {activity_message(str(error))}"
+            self.append_activity(self.notice)
             return
-        self.logs = []
         self.invalidate_preview()  # a completed run changes labels/PR state
         self.run_exit = None
+        self.run_started = self.clock()
+        self.outcome_effect = None
         self.log_scroll = 0
         self.tab = 3
         self.notice = "Pipeline running · x to interrupt safely"
+        self.append_activity(self.notice)
         threading.Thread(target=self._reader, args=(self.process,), daemon=True).start()
 
     def stop_run(self) -> None:
         if self.process is not None and self.process.poll() is None:
             self.process.send_signal(signal.SIGINT)
             self.notice = "Interrupt sent · waiting for FixBuddy cleanup"
+            self.append_activity(self.notice)
 
     def draw_header(self, screen: curses.window, width: int) -> None:
         self.put(screen, 0, 0, " " * width, "header")
         self.put(screen, 0, 1, " ◈ ", "badge", True)
         self.put(screen, 0, 6, " FIX BUDDY ", "header", True)
         if width < 72:
-            self.put(screen, 0, width - 12, f" {self.tab + 1}/4 {TABS[self.tab]} ", "header", True)
+            label = f" [{self.tab + 1}] {TABS[self.tab]} "
+            self.put(screen, 0, max(20, width - len(label) - 1), label, "header", True)
             return
         x = 24
         for index, label in enumerate(TABS):
-            if x + len(label) + 3 >= width - 3:
+            if x + len(label) + 5 >= width - 1:
                 break
-            self.put(screen, 0, x, f" {index + 1} {label} ", "badge" if index == self.tab else "header", index == self.tab)
-            x += len(label) + 5
+            self.put(screen, 0, x, f" [{index + 1}] {label} ", "badge" if index == self.tab else "header", index == self.tab)
+            x += len(label) + 7
         if width >= 105:
             repo = clean_display(self.settings.repo or "set repository")
             self.put(screen, 0, max(x + 2, width - 30), clip_cells(repo, min(27, width - x - 3)), "header")
@@ -769,11 +872,12 @@ class TerminalApp:
             ("Auto-merge", "ON · explicit" if self.settings.auto_merge else "OFF · human merge"),
         )
         value_x = min(width - 18, 25)
-        visible = max(1, panel_height - 4)
+        inset = 1 if panel_height < 5 else 2
+        visible = max(1, panel_height - inset - 1)
         first = max(0, min(self.setup_cursor - visible // 2, len(fields) - visible))
         for offset, (label, value) in enumerate(fields[first:first + visible]):
             index = first + offset
-            y = top + 2 + offset
+            y = top + inset + offset
             style = "select" if index == self.setup_cursor else "text"
             self.put(screen, y, 5, pad_cells(f" {'▸' if index == self.setup_cursor else ' '} {label}", max(1, value_x - 5)), style)
             self.put(screen, y, value_x, clip_cells(value, max(1, width - value_x - 5)),
@@ -784,16 +888,69 @@ class TerminalApp:
 
     def draw_run(self, screen: curses.window, width: int, height: int, top: int) -> None:
         panel_height = max(3, height - top - 2)
-        self.frame(screen, top, 2, panel_height, max(4, width - 4), "RUN ACTIVITY")
+        self.frame(screen, top, 2, panel_height, max(4, width - 4), "RUN HISTORY")
         state = "RUNNING" if self.process is not None and self.run_exit is None else (
             f"EXIT {self.run_exit}" if self.run_exit is not None else "READY")
-        self.put(screen, top + 1, 5, state, "amber" if state == "RUNNING" else "green", True)
-        visible = max(0, panel_height - 4)
-        start = max(0, len(self.logs) - visible - self.log_scroll)
-        for index, line in enumerate(self.logs[start:start + visible]):
-            self.put(screen, top + 3 + index, 5, line, "muted")
+        compact = panel_height < 6
+        if not compact:
+            self.put(screen, top + 1, 4, state, "amber" if state == "RUNNING" else "violet", True)
+        inset = 1 if compact else 3
+        visible = max(0, panel_height - inset - 1)
+        lines = self.history_lines(width - 8)
+        self.log_scroll = min(self.log_scroll, max(0, len(lines) - 1))
+        start = max(0, len(lines) - visible - self.log_scroll)
+        for index, line in enumerate(lines[start:start + visible]):
+            self.put(screen, top + inset + index, 4, line, "muted", width=width - 8)
         if not self.logs:
-            self.put(screen, top + 4, 5, "Select one repo and press g. Inventory reads cause no writes.", "muted")
+            self.put(screen, top + inset, 4, "Select one repo and press g.", "muted", width=width - 8)
+
+    def draw_activity(self, screen, width, top, height):
+        self.frame(screen, top, 2, height, width - 4, "ACTIVITY · [4] history")
+        row, remaining = top + 1, height - 2
+        effect, busy = self.current_outcome(), self.busy_status()
+        if effect:
+            stopped = effect['exit'] != 0
+            label = 'RUN STOPPED' if stopped else 'RUN FINISHED'
+            color = 'amber' if stopped else 'violet'
+            face = '😱 (O_O)! ' if stopped else '◈ (o.o) '
+            self.put(screen, row, 4, face + label, color, True, width - 8)
+            row, remaining = row + 1, remaining - 1
+            if remaining > 0:
+                message = 'Check the log · no automatic retry' if stopped else 'Review the summary · [4] RUN'
+                self.put(screen, row, 4, message, color, width=width - 8)
+                row, remaining = row + 1, remaining - 1
+            if remaining > 1:
+                age = self.clock() - effect['started']
+                radius = min(9, int(age * 5))
+                wave = ['·'] * 21
+                wave[10] = '◆'
+                wave[10 - radius] = wave[10 + radius] = '✦'
+                self.put(screen, row, 4, ''.join(wave) + f"  exit {effect['exit']}", 'magenta', width=width - 8)
+                row, remaining = row + 1, remaining - 1
+        elif busy:
+            phase, began = busy
+            elapsed = max(0, self.clock() - began) if began is not None else 0
+            stamp = f'{int(elapsed) // 60:02d}:{int(elapsed) % 60:02d}'
+            spinner = '|/-\\'[int(elapsed * 8) % 4]
+            face = ('(o.o)', '(o.-)', '(o.o)', '(-.o)')[int(elapsed / 2) % 4]
+            title = 'FIX BUDDY IS ON IT' if width >= 76 else 'working'
+            self.put(screen, row, 4, f'{spinner} {face} {title} · {stamp}', 'violet', True, width - 8)
+            row, remaining = row + 1, remaining - 1
+            if remaining >= 3:
+                position = int(elapsed * 9) % 38
+                position = position if position < 20 else 38 - position
+                sweep = ''.join('●' if i == position else '━' if abs(i - position) == 1 else '·'
+                                for i in range(20))
+                self.put(screen, row, 4, sweep + '  ' + phase, 'magenta', width=width - 8)
+                row, remaining = row + 1, remaining - 1
+            if remaining >= 2:
+                phrase = BUDDY_PHRASES[(self.phrase_offset + int(elapsed / 6)) % len(BUDDY_PHRASES)]
+                self.put(screen, row, 4, phrase, 'pink', width=width - 8)
+                row, remaining = row + 1, remaining - 1
+        lines = ([self.logs[-1]] if remaining == 1 else self.history_lines(width - 8)) if self.logs else [
+            'Your Buddy is ready. Events appear here.']
+        for offset, line in enumerate(lines[-remaining:] if remaining > 0 else []):
+            self.put(screen, row + offset, 4, line, 'muted', width=width - 8)
 
     def draw_footer(self, screen: curses.window, width: int, height: int) -> None:
         self.put(screen, height - 1, 0, " " * width, "footer")
@@ -803,15 +960,18 @@ class TerminalApp:
         if self.tab == 2:
             hints = "  Tab tabs   ↑↓ field   Enter edit   ←→ choice   g run   ? help   q quit"
         if self.tab == 3:
-            hints = "  Tab tabs   ↑↓ scroll   x interrupt   ? help   q quit"
+            hints = "  ↑↓ scroll  PgUp/PgDn page  Home oldest  End latest  x interrupt  q quit"
+        if width < 76:
+            hints = (" ↑↓ Enter repo · [1–4] tabs · g run · q", " Space select · Enter detail · g · q",
+                     " ↑↓ Enter edit · ←→ · [1–4] · g · q", " ↑↓ PgUp/Dn Home/End · x stop · q")[self.tab]
         self.put(screen, height - 1, 0, clip_cells(hints, width), "footer")
         if height >= 3:
-            self.put(screen, height - 2, 2, clip_cells(self.notice, width - 4),
+            self.put(screen, height - 2, 2, clip_cells(activity_message(self.notice), width - 4),
                      "red" if "failed" in self.notice.lower() else "muted")
 
     def draw_dialog(self, screen: curses.window, width: int, height: int) -> None:
-        box_width = min(width - 6, 76)
-        box_height = min(height - 6, 12)
+        box_width = min(width - 4, 76)
+        box_height = min(height - 2, 12)
         if box_width < 16 or box_height < 4:
             return
         x, y = (width - box_width) // 2, (height - box_height) // 2
@@ -833,12 +993,12 @@ class TerminalApp:
                 count = min(count, self.settings.max_issues)
             lines = [f"Repository  {self.settings.repo}", f"Issues      {count} of {self.actionable_count} actionable",
                      f"Agents      {self.settings.fix_agent}  →  {self.settings.review_agent}",
-                     f"Merge       {'AUTO-MERGE REQUESTED' if self.settings.auto_merge else 'PR stays open for you'}", "",
-                     "Press y to start · n or Esc to cancel"]
+                     f"Merge: {'AUTO-MERGE REQUESTED' if self.settings.auto_merge else 'PR stays open for you'}", "",
+                     "Press y to start · n or Esc to cancel" if box_width >= 50 else "y: start · n/Esc: cancel"]
         elif self.dialog == "stop":
             lines = ["FixBuddy will receive SIGINT and clean up its local branch.", "", "Press y to interrupt · n or Esc to keep running"]
         for index, line in enumerate(lines[:box_height - 2]):
-            self.put(screen, y + 1 + index, x + 2, line, "text" if index == 0 else "muted")
+            self.put(screen, y + 1 + index, x + 2, line, "text" if index == 0 else "muted", width=box_width - 4)
 
     def draw(self, screen: curses.window) -> None:
         screen.erase()
@@ -849,14 +1009,16 @@ class TerminalApp:
             return
         self.draw_header(screen, width)
         top = self.draw_hero(screen, width, height)
-        if self.tab == 0:
-            self.draw_repos(screen, width, height, top)
-        elif self.tab == 1:
-            self.draw_queue(screen, width, height, top)
-        elif self.tab == 2:
-            self.draw_setup(screen, width, height, top)
-        else:
-            self.draw_run(screen, width, height, top)
+        active = self.busy_status() or self.current_outcome()
+        wanted = (8 if active else 5) if height >= 23 else (5 if active else 3)
+        activity_height = min(wanted, max(3, height - top - 5))
+        self.content_bottom = height - 2 - activity_height
+        try:
+            draw_content = (self.draw_repos, self.draw_queue, self.draw_setup, self.draw_run)[self.tab]
+            draw_content(screen, width, height - activity_height, top)
+        finally:
+            self.content_bottom = None
+        self.draw_activity(screen, width, height - 2 - activity_height, activity_height)
         self.draw_footer(screen, width, height)
         if self.dialog:
             self.draw_dialog(screen, width, height)
@@ -981,10 +1143,21 @@ class TerminalApp:
             elif key in (10, 13, curses.KEY_ENTER, ord("e")):
                 self.edit_field(screen)
         elif self.tab == 3:
+            height, width = screen.getmaxyx()
+            maximum = max(0, len(self.history_lines(width - 8)) - 1)
+            page = max(1, height // 3)
             if key in (curses.KEY_UP, ord("k")):
-                self.log_scroll = min(max(0, len(self.logs) - 1), self.log_scroll + 1)
+                self.log_scroll = min(maximum, self.log_scroll + 1)
             elif key in (curses.KEY_DOWN, ord("j")):
                 self.log_scroll = max(0, self.log_scroll - 1)
+            elif key == curses.KEY_HOME:
+                self.log_scroll = maximum
+            elif key == curses.KEY_END:
+                self.log_scroll = 0
+            elif key == curses.KEY_PPAGE:
+                self.log_scroll = min(maximum, self.log_scroll + page)
+            elif key == curses.KEY_NPAGE:
+                self.log_scroll = max(0, self.log_scroll - page)
         return True
 
     def run(self, screen: curses.window) -> None:
@@ -1046,7 +1219,7 @@ __FIXBUDDY_TUI_SOURCE_20260927_END__
 
 fixbuddy_wizard_source() { cat <<'__FIXBUDDY_WIZARD_SOURCE_20260927_END__'
 #!/usr/bin/env bash
-# fixbuddy wizard v0.9.2 — beginner-friendly launcher for fixbuddy
+# fixbuddy wizard v0.9.3 — beginner-friendly launcher for fixbuddy
 #
 # Walks a user through the required flags via interactive prompts, validates
 # prerequisites, shows a preview of the exact command, and then runs fixbuddy.
@@ -1079,7 +1252,7 @@ printf "%s" "${MAG}${BOLD}"
 cat <<'EOF'
 
   ╔═══════════════════════════════════════════════════╗
-  ║              fixbuddy wizard v0.9.2               ║
+  ║              fixbuddy wizard v0.9.3               ║
   ║   Turn GitHub issues into reviewed PRs             ║
   ╚═══════════════════════════════════════════════════╝
 EOF
@@ -1394,7 +1567,7 @@ __FIXBUDDY_WIZARD_SOURCE_20260927_END__
 }
 
 fixbuddy_help_source() { cat <<'__FIXBUDDY_HELP_20260927_END__'
-fixbuddy v0.9.2 — two-agent issue fixing with independent review
+fixbuddy v0.9.3 — two-agent issue fixing with independent review
 
 Pipeline per issue:
   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -1481,7 +1654,7 @@ esac
 FIXBUDDY_EMBEDDED_HELP="$(fixbuddy_help_source)"
 
 #!/usr/bin/env bash
-# fixbuddy v0.9.2 — two-agent issue fixing with independent review
+# fixbuddy v0.9.3 — two-agent issue fixing with independent review
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -1536,7 +1709,7 @@ FIXBUDDY_EMBEDDED_HELP="$(fixbuddy_help_source)"
 #   filter), and a config-provided label/check/notify cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.9.2"
+VERSION="0.9.3"
 
 # -------- Defaults --------
 REPO=""

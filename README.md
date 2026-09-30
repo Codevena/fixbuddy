@@ -57,7 +57,7 @@ VERIFY -> FIX -> REVIEW -> PUSH/PR -> optional auto-merge
 Install the single-file release on macOS or Linux (including WSL2):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.2/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.3/install.sh | bash
 gh auth login
 fixbuddy
 ```
@@ -76,6 +76,20 @@ repository is marked unknown instead of showing a false zero. Press `?` for
 shortcuts, select a repository, then set its local checkout in **SETUP** before
 starting a run. The selected checkout must point at the selected GitHub
 repository. No checkout is required just to browse the read-only inventory.
+
+The keyboard tabs are **[1] REPOS · [2] ISSUES · [3] SETUP · [4] RUN**.
+A bottom **ACTIVITY** panel keeps recent timestamped events visible in every
+view. While the inventory or pipeline is running, Buddy animates with the real
+elapsed time. The **RUN** view wraps the last 1,500 session events; use
+**↑/↓**, **PgUp/PgDn**, **Home** and **End** to browse or follow the latest event.
+Recognizable credentials are withheld from this bounded display history.
+It stays in memory; the Bash pipeline's existing run logs remain under
+`~/.fixbuddy/runs`.
+
+A brief **RUN FINISHED** notice means the process exited successfully;
+review its summary for the actual issue and PR outcomes. **RUN STOPPED**
+points to an interrupted or failed process. Neither notice changes your tab
+or approves a fix, PR, or merge. The layout supports terminals from **40×12**.
 
 The UI uses Python 3's standard library. If Python 3 is unavailable, the
 interactive command opens the Bash wizard. You can also run `fixbuddy --wizard`

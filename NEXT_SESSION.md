@@ -1,5 +1,19 @@
 # Next session
 
+## Local v0.9.3 release candidate — 2026-09-30
+
+Buddy-family terminal changes are in product commit `3a637e4`, based on the
+published v0.9.2 state. Release preparation sets the core, wizard and pinned
+installer to v0.9.3, records the release changelog, and regenerates the single
+`fixbuddy` executable plus `SHA256SUMS`. The five focused offline installer
+cases, Bash syntax, deterministic bundle, checksum and diff checks pass.
+The v0.8 installer paths retain their existing behavior.
+
+The complete integration/UI suites and publication verification still need
+to run on the final release candidate. Integration, push and release are
+authorized for the coordinating session; it owns commits, PR/merge, tags,
+release assets and the public installer smoke. No live agent test is needed.
+
 ## Published v0.9.2 — 2026-09-27
 
 Product commit `cc55978` and release preparation `f86a4be` were merged via

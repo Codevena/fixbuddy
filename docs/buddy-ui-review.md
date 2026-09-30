@@ -20,3 +20,12 @@ delta verdict PASS, no open CRITICAL/WARN. No live agent or GitHub write tests.
 The read-only pre-run preview retains its existing synchronous operation; the
 pipeline and repository inventory animate. Core run logs remain in their
 existing location; the UI adds no durable copy of raw output.
+
+## Release candidate — 2026-09-30
+
+The historical preview evidence above describes product commit `3a637e4`.
+Release preparation updates the version and installer pins to stable v0.9.3,
+with no additional behavior change, and rebuilds the single-file bundle.
+All five focused offline installer cases pass, including the explicit v0.8
+paths, as do Bash syntax, deterministic bundle, checksum and diff checks.
+The final complete integration/UI suites and publication checks are pending.

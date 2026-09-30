@@ -41,7 +41,7 @@ jobs:
         run: |
           python3 scripts/build.py --check
           python3 -m py_compile src/tui.py
-          python3 -m unittest discover -s tests -p 'test_tui.py'
+          python3 -m unittest discover -s tests -p 'test_*.py'
 
   integration:
     name: Integration tests (mocked CLIs)

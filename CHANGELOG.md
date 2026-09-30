@@ -6,6 +6,8 @@ All notable changes to fixbuddy are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-09-30
+
 ### Added
 - ScoutBuddy-family activity panel, elapsed-time Buddy animation and local
   phrases in the terminal UI, with wrapped timestamped session history.
@@ -186,6 +188,10 @@ to existing flags.
 
 Predate this changelog. See the git history and the `v0.4.0` / `v0.3.2` tags.
 
+[Unreleased]: https://github.com/Codevena/fixbuddy/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/Codevena/fixbuddy/compare/v0.9.2...v0.9.3
+[0.9.2]: https://github.com/Codevena/fixbuddy/compare/v0.9.1...v0.9.2
+[0.9.1]: https://github.com/Codevena/fixbuddy/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Codevena/fixbuddy/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Codevena/fixbuddy/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/Codevena/fixbuddy/compare/v0.7.0...v0.7.1

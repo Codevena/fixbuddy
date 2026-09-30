@@ -102,8 +102,62 @@ class BuddyUITests(unittest.TestCase):
         self.app.drain_events()
         self.assertFalse(getattr(self.app, 'outcome_effect', None))
 
+    def test_run_uses_classic_two_panels_and_details_toggle(self):
+        self.app.tab = 3
+        self.app.process = Mock()
+        self.app.run_started = 100.0
+        self.app.run_info = {'repo': 'example/demo', 'numbers': [7, 8],
+                             'fix_agent': 'claude', 'review_agent': 'codex', 'auto_merge': False}
+        self.now += 12
+        self.app.append_activity('Synthetic precise diagnostic')
+        screen = Screen(30, 120)
+        self.app.draw(screen)
+        text = screen.content()
+        for label in ('FIX BUDDY', 'BUDDY AT WORK', 'WORKFLOW', 'ACTIVITY', '(o.o)', '00:12', '#7', '#8'):
+            self.assertIn(label, text)
+        self.assertNotIn('RUN HISTORY', text)
+        self.app.handle_key(screen, ord('d'))
+        self.app.draw(screen)
+        self.assertIn('RUN HISTORY', screen.content())
+        self.assertIn('Synthetic precise diagnostic', screen.content())
+        self.app.handle_key(screen, ord('d'))
+        self.app.draw(screen)
+        self.assertIn('BUDDY AT WORK', screen.content())
+
+    def test_run_card_keeps_approved_selection_when_setup_changes(self):
+        self.app.settings.project = '/synthetic/project'
+        self.app.settings.max_issues = 1
+        self.app.actionable_order = [7, 8]
+        self.app.actionable_numbers = {7, 8}
+        self.app.preview_key = (tui.settings_key(self.app.settings), self.app.catalog_generation)
+        with patch.object(tui.subprocess, 'Popen'), patch.object(tui.threading.Thread, 'start'):
+            self.app.start_run()
+        self.app.settings.repo = 'different/repo'
+        self.app.settings.fix_agent = 'agy'
+        self.app.settings.auto_merge = True
+        self.app.selected = {99}
+        screen = Screen(30, 120)
+        self.app.draw(screen)
+        text = screen.content()
+        self.assertEqual(self.app.run_info['repo'], 'example/demo')
+        self.assertEqual(self.app.run_info['numbers'], [7])
+        self.assertIn('#7', text)
+        self.assertNotIn('#99', text)
+        self.assertNotIn('agy', text)
+        self.assertNotIn('different/repo', text)
+        self.assertNotIn('AUTO-MERGE ON', text)
+        self.now += 12
+        self.app.events.put(('exit', 0))
+        self.app.drain_events()
+        self.now += 6
+        self.app.draw(screen)
+        self.assertIn('Review the log', screen.content())
+        self.assertIn('Run finished · 00:12', screen.content())
+        self.assertNotIn('FIX APPLIED', screen.content())
+
     def test_history_wraps_long_lines_and_can_return_to_latest(self):
         self.app.tab = 3
+        self.app.run_details = True
         self.app.events.put(('line', 'Synthetic long event: ' + 'word ' * 30 + 'END-MARKER'))
         self.app.drain_events()
         screen = Screen(30, 76)
@@ -155,6 +209,7 @@ class BuddyUITests(unittest.TestCase):
 
     def test_history_retains_unbroken_words_and_pages_without_changing_tabs(self):
         self.app.tab = 3
+        self.app.run_details = True
         message = 'a' * 120 + 'TAILMARKER'
         self.app.events.put(('line', message))
         self.app.drain_events()

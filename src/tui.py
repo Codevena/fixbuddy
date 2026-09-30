@@ -402,6 +402,9 @@ class TerminalApp:
         self.clock = clock or time.monotonic
         self.wall_clock = wall_clock or time.time
         self.run_started = None
+        self.run_finished = None
+        self.run_info = None
+        self.run_details = False
         self.catalog_started = None
         self.outcome_effect = None
         self.phrase_offset = random.randrange(len(BUDDY_PHRASES))
@@ -670,6 +673,7 @@ class TerminalApp:
                 self.append_activity(value)
             elif kind == "exit" and type(value) is int and self.process is not None:
                 self.run_exit = value
+                self.run_finished = self.clock()
                 self.outcome_effect = {'exit': value, 'started': self.clock()}
                 result = 'Run finished' if value == 0 else 'Run stopped'
                 self.notice = f"{result} · exit {self.run_exit} · review the summary in RUN"
@@ -695,9 +699,16 @@ class TerminalApp:
             self.notice = f"Could not start: {activity_message(str(error))}"
             self.append_activity(self.notice)
             return
+        self.run_info = {'repo': self.settings.repo,
+                         'numbers': numbers[:self.settings.max_issues],
+                         'fix_agent': self.settings.fix_agent,
+                         'review_agent': self.settings.review_agent,
+                         'auto_merge': self.settings.auto_merge}
         self.invalidate_preview()  # a completed run changes labels/PR state
         self.run_exit = None
         self.run_started = self.clock()
+        self.run_finished = None
+        self.run_details = False
         self.outcome_effect = None
         self.log_scroll = 0
         self.tab = 3
@@ -726,7 +737,8 @@ class TerminalApp:
             self.put(screen, 0, x, f" [{index + 1}] {label} ", "badge" if index == self.tab else "header", index == self.tab)
             x += len(label) + 7
         if width >= 105:
-            repo = clean_display(self.settings.repo or "set repository")
+            repo = clean_display((self.run_info['repo'] if self.tab == 3 and self.run_info else
+                                  self.settings.repo) or "set repository")
             self.put(screen, 0, max(x + 2, width - 30), clip_cells(repo, min(27, width - x - 3)), "header")
 
     def draw_hero(self, screen: curses.window, width: int, height: int) -> int:
@@ -762,10 +774,11 @@ class TerminalApp:
         self.put(screen, 4, x, f"{unknown}   UNKNOWN", "amber" if error_count or self.catalog_error else "green", True)
         self.put(screen, 8, 3, "VERIFY  →  FIX  →  REVIEW  →  PR", "violet", True)
         if width >= 110:
+            auto_merge = self.run_info['auto_merge'] if self.tab == 3 and self.run_info else self.settings.auto_merge
             self.put(screen, 3, width - 29, "MERGE POLICY", "muted", True)
             self.put(screen, 4, width - 29,
-                     "AUTO-MERGE ON" if self.settings.auto_merge else "HUMAN MERGE",
-                     "amber" if self.settings.auto_merge else "green", True)
+                     "AUTO-MERGE ON" if auto_merge else "HUMAN MERGE",
+                     "amber" if auto_merge else "green", True)
         return 10
 
     def draw_repos(self, screen: curses.window, width: int, height: int, top: int) -> None:
@@ -883,6 +896,9 @@ class TerminalApp:
                      "Enter: select / edit   ← →: cycle   r: refresh GitHub", "muted")
 
     def draw_run(self, screen: curses.window, width: int, height: int, top: int) -> None:
+        if not self.run_details:
+            self.draw_run_summary(screen, width, height, top)
+            return
         panel_height = max(3, height - top - 2)
         self.frame(screen, top, 2, panel_height, max(4, width - 4), "RUN HISTORY")
         state = "RUNNING" if self.process is not None and self.run_exit is None else (
@@ -899,6 +915,48 @@ class TerminalApp:
             self.put(screen, top + inset + index, 4, line, "muted", width=width - 8)
         if not self.logs:
             self.put(screen, top + inset, 4, "Select one repo and press g.", "muted", width=width - 8)
+
+    def draw_run_summary(self, screen, width, height, top):
+        left, right = panel_widths(width)
+        panel_height = max(3, height - top - 2)
+        rows = max(0, panel_height - 2)
+        running = self.process is not None and self.run_exit is None
+        title = 'BUDDY AT WORK' if running else 'LAST RUN' if self.run_exit is not None else 'YOUR FIX BUDDY'
+        self.frame(screen, top, 2, panel_height, left, title)
+        end = self.run_finished if self.run_finished is not None else self.clock()
+        elapsed = max(0, int(end - self.run_started)) if self.run_started is not None else 0
+        stamp = f'{elapsed // 60:02d}:{elapsed % 60:02d}'
+        if running:
+            lines = [(f'Working through your queue · {stamp}', 'pink'),
+                     ('Your fixer and reviewer are on it.', 'muted')]
+        elif self.run_exit is not None:
+            lines = [(f'Run finished · {stamp}' if self.run_exit == 0 else f'Run stopped · exit {self.run_exit}', 'violet' if self.run_exit == 0 else 'amber'),
+                     ('Review the log for issue and PR outcomes.', 'muted')]
+        else:
+            lines = [('Ready when you are, buddy.', 'pink'),
+                     ('Choose issues, then g to preview your run.', 'muted')]
+        if self.run_info:
+            info = self.run_info
+            numbers = ', '.join(f'#{number}' for number in info['numbers'][:8])
+            if len(info['numbers']) > 8:
+                numbers += f" (+{len(info['numbers']) - 8} more)"
+            lines += [('Repo: ' + info['repo'], 'text'),
+                      (f"Approved: {len(info['numbers'])} issue(s) · {numbers}", 'text'),
+                      ('Fixer: ' + info['fix_agent'] + ' · Reviewer: ' + info['review_agent'], 'violet'),
+                      ('Merge: AUTO-MERGE REQUESTED' if info['auto_merge'] else 'Merge: PRs stay open for your review.',
+                       'amber' if info['auto_merge'] else 'green')]
+        lines += [('', 'text'), ('d  Full run log', 'violet')]
+        for row, (line, style) in enumerate(lines[:rows]):
+            self.put(screen, top + 1 + row, 4, line, style, width=left - 4)
+        if right:
+            x = left + 5
+            self.frame(screen, top, x, panel_height, right, 'WORKFLOW')
+            guide = ['VERIFY → FIX → REVIEW → PR', '', 'd  Full run log',
+                     'x  Interrupt safely' if running else 'g  Preview a new run',
+                     '[2] Review the issue queue', '[3] Agents and settings', '',
+                     'Each fix gets an independent review.']
+            for row, line in enumerate(guide[:rows]):
+                self.put(screen, top + 1 + row, x + 2, line, 'muted', width=right - 4)
 
     def draw_activity(self, screen, width, top, height):
         self.frame(screen, top, 2, height, width - 4, "ACTIVITY · [4] history")
@@ -943,7 +1001,7 @@ class TerminalApp:
                 phrase = BUDDY_PHRASES[(self.phrase_offset + int(elapsed / 6)) % len(BUDDY_PHRASES)]
                 self.put(screen, row, 4, phrase, 'pink', width=width - 8)
                 row, remaining = row + 1, remaining - 1
-        lines = ([self.logs[-1]] if remaining == 1 else self.history_lines(width - 8)) if self.logs else [
+        lines = ([self.logs[-1]] if remaining == 1 else wrap_activity(self.logs[-max(1, remaining):], width - 8)) if self.logs else [
             'Your Buddy is ready. Events appear here.']
         for offset, line in enumerate(lines[-remaining:] if remaining > 0 else []):
             self.put(screen, row + offset, 4, line, 'muted', width=width - 8)
@@ -956,10 +1014,12 @@ class TerminalApp:
         if self.tab == 2:
             hints = "  Tab tabs   ↑↓ field   Enter edit   ←→ choice   g run   ? help   q quit"
         if self.tab == 3:
-            hints = "  ↑↓ scroll  PgUp/PgDn page  Home oldest  End latest  x interrupt  q quit"
+            hints = (" d Buddy view · ↑↓ scroll · PgUp/Dn · Home/End · x interrupt · q quit" if self.run_details else
+                     " d full log · [2] issues · [3] setup · g preview · x interrupt · q quit")
         if width < 76:
             hints = (" ↑↓ Enter repo · [1–4] tabs · g run · q", " Space select · Enter detail · g · q",
-                     " ↑↓ Enter edit · ←→ · [1–4] · g · q", " ↑↓ PgUp/Dn Home/End · x stop · q")[self.tab]
+                     " ↑↓ Enter edit · ←→ · [1–4] · g · q",
+                     " d Buddy · ↑↓ Home/End · x stop · q" if self.run_details else " d log · [1–4] tabs · g run · x stop")[self.tab]
         self.put(screen, height - 1, 0, clip_cells(hints, width), "footer")
         if height >= 3:
             self.put(screen, height - 2, 2, clip_cells(activity_message(self.notice), width - 4),
@@ -1139,6 +1199,9 @@ class TerminalApp:
             elif key in (10, 13, curses.KEY_ENTER, ord("e")):
                 self.edit_field(screen)
         elif self.tab == 3:
+            if key in (ord('d'), ord('D')):
+                self.run_details = not self.run_details
+                return True
             height, width = screen.getmaxyx()
             maximum = max(0, len(self.history_lines(width - 8)) - 1)
             page = max(1, height // 3)

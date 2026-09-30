@@ -2,11 +2,11 @@
 # install.sh — installer for fixbuddy (https://github.com/Codevena/fixbuddy)
 #
 # Quick install:
-#   curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.3/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.4/install.sh | bash
 #
 # Options (pass after the URL as: | bash -s -- <options>):
 #   --prefix PATH   Install into PATH instead of the auto-detected location
-#   --ref TAG       Install from a specific git ref (default: v0.9.3).
+#   --ref TAG       Install from a specific git ref (default: v0.9.4).
 #   --with-tui      Legacy v0.8.0 only; the current file already includes the UI.
 #   --local         Install the single-file fixbuddy beside this installer.
 #   -y, --yes       Skip the sudo confirmation prompt
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 REPO_SLUG="Codevena/fixbuddy"
-DEFAULT_REF="v0.9.3"
+DEFAULT_REF="v0.9.4"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_SLUG}"
 SCRIPTS=(fixbuddy)
 
@@ -44,11 +44,11 @@ usage() {
   cat >&2 <<'EOF'
 install.sh — installer for fixbuddy
 
-  curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.3/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Codevena/fixbuddy/v0.9.4/install.sh | bash
 
 Options (pass as: | bash -s -- <options>):
   --prefix PATH   Install into PATH instead of the auto-detected location
-  --ref TAG       Install fixbuddy from a specific git ref (default: v0.9.3;
+  --ref TAG       Install fixbuddy from a specific git ref (default: v0.9.4;
                   use --ref main for the latest commit)
   --with-tui      Legacy v0.8.0 only; the current file already includes the UI
   --local         Install the single-file fixbuddy beside this installer

@@ -709,18 +709,18 @@ test_help_does_not_cut_off_header() {
 make_install_fixture() {
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/fixbuddy-install-itest.XXXXXX")"
   RUNLOG="$TMP/install.log"
-  mkdir -p "$TMP/source/v0.7.1" "$TMP/source/v0.8.0" "$TMP/source/v0.9.3" "$TMP/source/main" "$TMP/bin"
+  mkdir -p "$TMP/source/v0.7.1" "$TMP/source/v0.8.0" "$TMP/source/v0.9.4" "$TMP/source/main" "$TMP/bin"
   for ref in v0.7.1 v0.8.0 main; do
     cp "$ROOT/src/core.sh" "$TMP/source/$ref/fixbuddy.sh"
     cp "$ROOT/src/wizard.sh" "$TMP/source/$ref/fixbuddy-wizard.sh"
   done
   cp "$ROOT/src/tui.py" "$TMP/source/v0.8.0/fixbuddy-tui.py"
   cp "$ROOT/src/tui.py" "$TMP/source/main/fixbuddy-tui.py"
-  cp "$ROOT/fixbuddy" "$TMP/source/v0.9.3/fixbuddy"
+  cp "$ROOT/fixbuddy" "$TMP/source/v0.9.4/fixbuddy"
   cp "$ROOT/fixbuddy" "$TMP/source/main/fixbuddy"
   ( cd "$TMP/source/v0.7.1" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh > SHA256SUMS )
   ( cd "$TMP/source/v0.8.0" && shasum -a 256 fixbuddy.sh fixbuddy-wizard.sh fixbuddy-tui.py > SHA256SUMS )
-  ( cd "$TMP/source/v0.9.3" && shasum -a 256 fixbuddy > SHA256SUMS )
+  ( cd "$TMP/source/v0.9.4" && shasum -a 256 fixbuddy > SHA256SUMS )
   ( cd "$TMP/source/main" && shasum -a 256 fixbuddy > SHA256SUMS )
   ln -s "$STUBS/curl" "$TMP/bin/curl"
 }
@@ -733,7 +733,7 @@ test_installer_default_ref_is_one_file() {
   [ "$RC" -eq 0 ] || fail "default installer exit code $RC"
   [ -x "$TMP/installed/fixbuddy" ] || fail "single-file command not installed"
   [ "$(find "$TMP/installed" -type f | wc -l | tr -d ' ')" -eq 1 ] || fail "default installed more than one file"
-  assert_substr "$RUNLOG" 'v0.9.3'
+  assert_substr "$RUNLOG" 'v0.9.4'
 }
 
 test_installer_legacy_ref_stays_two_scripts() {

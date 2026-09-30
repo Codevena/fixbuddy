@@ -1,18 +1,26 @@
 # Next session
 
-## Local classic Buddy RUN — 2026-09-30
+## v0.9.4 release candidate — 2026-09-30
 
-Current development version: 0.9.4-dev on `feat/classic-buddy-run`, based on
-the published v0.9.3 merge `aa66a57`. RUN now matches ScoutBuddy's approved
-classic layout: full wordmark, Buddy summary and workflow panels, original
+Stable candidate version: 0.9.4 on `feat/classic-buddy-run`; product commit
+`3289ab4` is based on the published v0.9.3 merge `aa66a57`. RUN matches
+ScoutBuddy's approved classic layout: full wordmark, Buddy summary and workflow panels, original
 animated face in the activity strip, and `d` to toggle the complete log.
 Summary metadata is captured from the approved run, not mutable setup fields;
 process completion never claims that a fix or merge succeeded.
 
-The Bash pipeline differs only in its version. Run/merge confirmation and
-interruption behavior stay unchanged. The public installer remains pinned to
-v0.9.3. This local UI update has not been pushed or released. The user-owned
-`review-todo.md` in the main checkout is unchanged.
+Release preparation sets the core and wizard to 0.9.4, pins the candidate
+installer and README to v0.9.4, records the changelog, and regenerates the
+bundle and checksum. The Bash pipeline differs only in its version.
+All five focused offline installer cases, Bash syntax, deterministic bundle,
+SHA256, version output and diff whitespace checks pass.
+
+Final local suites pass: 37 Python UI/PTY tests and 62 offline integration
+cases, plus ShellCheck and actionlint. Publication verification is pending. Integration,
+push and release are authorized for the coordinating session; it owns staging,
+commits, PR/merge, tags, release assets and the public installer smoke.
+The latest published release is v0.9.3 until publication is verified. The
+user-owned `review-todo.md` in the main checkout remains untouched.
 
 The release-candidate section below is historical: PR #19 was already merged
 and v0.9.3 published before this new local adaptation.

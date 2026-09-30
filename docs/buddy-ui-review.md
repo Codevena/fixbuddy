@@ -1,6 +1,19 @@
 # Buddy-family terminal preview
 
-Local UI: 0.9.4-dev. The public installer remains pinned to released v0.9.3.
+Release candidate: 0.9.4. The candidate installer is pinned to v0.9.4;
+the latest published release is v0.9.3 until publication is verified.
+
+## v0.9.4 release candidate — 2026-09-30
+
+Product commit `3289ab4` contains the classic RUN refinement below. Release
+preparation sets the core and wizard versions plus installer pins to stable
+v0.9.4, records the changelog, and rebuilds the single-file executable and
+checksum. Final local suites passed: 37 Python UI/PTY tests and 62 offline
+integration cases, plus ShellCheck and actionlint. Publication verification
+remains with the coordinating session.
+
+Focused candidate checks pass: all five offline installer cases, Bash syntax,
+deterministic bundle, SHA256 verification, version output and diff whitespace.
 
 ## Classic RUN refinement — 2026-09-30
 
@@ -37,7 +50,7 @@ The read-only pre-run preview retains its existing synchronous operation; the
 pipeline and repository inventory animate. Core run logs remain in their
 existing location; the UI adds no durable copy of raw output.
 
-## Release candidate — 2026-09-30
+## Historical v0.9.3 release candidate — 2026-09-30
 
 The historical preview evidence above describes product commit `3a637e4`.
 Release preparation updates the version and installer pins to stable v0.9.3,
@@ -47,4 +60,5 @@ paths, as do Bash syntax, deterministic bundle, checksum and diff checks.
 The final complete suites passed: 35 Python UI tests and 62 offline integration
 cases. ShellCheck, actionlint, bundle consistency and checksum verification also
 passed. GitHub PR #19 passed shell checks, integration tests and the Action
-dry-run wrapper smoke test. Release publication is the next step.
+dry-run wrapper smoke test. PR #19 was merged and v0.9.3 was published before
+the current classic RUN refinement.

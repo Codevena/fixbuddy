@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fixbuddy v0.9.4-dev — two-agent issue fixing with independent review
+# fixbuddy v0.9.4 — two-agent issue fixing with independent review
 #
 # Pipeline per issue:
 #   1. VERIFY (fix-agent)    — is this real? → PROCEED / FALSE-POSITIVE / BLOCKED
@@ -54,7 +54,7 @@
 #   filter), and a config-provided label/check/notify cannot be removed from the CLI.
 
 set -uo pipefail
-VERSION="0.9.4-dev"
+VERSION="0.9.4"
 
 # -------- Defaults --------
 REPO=""

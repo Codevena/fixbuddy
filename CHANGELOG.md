@@ -6,6 +6,8 @@ All notable changes to fixbuddy are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-09-30
+
 ### Changed
 - RUN uses ScoutBuddy's classic Buddy summary and workflow panels, with the
   original animated face in the activity strip and `d` for the complete log.
@@ -194,7 +196,8 @@ to existing flags.
 
 Predate this changelog. See the git history and the `v0.4.0` / `v0.3.2` tags.
 
-[Unreleased]: https://github.com/Codevena/fixbuddy/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/Codevena/fixbuddy/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/Codevena/fixbuddy/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/Codevena/fixbuddy/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/Codevena/fixbuddy/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Codevena/fixbuddy/compare/v0.9.0...v0.9.1

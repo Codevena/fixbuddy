@@ -1,5 +1,17 @@
 # Next session
 
+## Active menu change — 2026-10-26
+
+User requested ScoutBuddy's menu order:1SETUP →2REPOS →3RUN →4ISSUES.
+Local branch feat/scout-style-menu, commit18082b1 based on main c75caab.
+42 UI/PTY tests, generated bundle/source equality, Bash syntax, version0.9.4,
+SHA256SUMS and independent six actual PTY cases40/76/120 PASS0C/0W.
+Bundle156996bytes SHA256c1775d0d29b73f124834a7fe7ec5359a5c6fce3df84ea75d044c8f1f67f15b30.
+Review docs/dev/2026-10-26-scout-menu-review.md. No pipeline/authority change.
+Preserve user-owned untracked review-todo.md. No new push/merge/install/release
+permission. The historical candidate authorizations below are not current consent.
+Next executable step: obtain concrete delivery approval for this finished change.
+
 ## v0.9.4 release candidate — 2026-09-30
 
 Stable candidate version: 0.9.4 on `feat/classic-buddy-run`; product commit

@@ -77,7 +77,9 @@ shortcuts, select a repository, then set its local checkout in **SETUP** before
 starting a run. The selected checkout must point at the selected GitHub
 repository. No checkout is required just to browse the read-only inventory.
 
-The keyboard tabs are **[1] REPOS · [2] ISSUES · [3] SETUP · [4] RUN**.
+The keyboard tabs are **[1] SETUP · [2] REPOS · [3] RUN · [4] ISSUES**.
+Without a configured repository and local checkout, the UI starts in **SETUP**;
+otherwise it starts in **REPOS**. **Tab** follows the same order.
 A bottom **ACTIVITY** panel keeps recent timestamped events visible in every
 view. While the inventory or pipeline is running, Buddy animates with the real
 elapsed time. **RUN** uses the same classic two-panel layout as ScoutBuddy:

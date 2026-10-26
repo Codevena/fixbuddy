@@ -26,6 +26,121 @@ SPEC.loader.exec_module(tui)
 
 
 class TerminalUiTests(unittest.TestCase):
+    def test_startup_opens_setup_until_repository_and_checkout_are_configured(self):
+        from test_buddy_ui import Screen
+        for settings, expected in (
+            (tui.Settings(), '[1] SETUP'),
+            (tui.Settings(repo='acme/app'), '[1] SETUP'),
+            (tui.Settings(project='/tmp/app'), '[1] SETUP'),
+            (tui.Settings(repo='acme/app', project='/tmp/app'), '[2] REPOS'),
+        ):
+            with self.subTest(settings=settings):
+                app = tui.TerminalApp(Path('/bin/fixbuddy'), settings)
+                screen = Screen(12, 40)
+                app.draw(screen)
+                header = ''.join(text for y, _, text, _ in screen.writes if y == 0)
+                self.assertIn(expected, header)
+
+    def test_numbered_tabs_and_tab_cycle_render_scout_order_without_losing_selection(self):
+        from test_buddy_ui import Screen
+        app = tui.TerminalApp(Path('/bin/fixbuddy'), tui.Settings(repo='acme/app', project='/tmp/app'))
+        app.selected = {7}
+        app.preview_key = (tui.settings_key(app.settings), app.catalog_generation)
+        preview_key = app.preview_key
+        app.repo_cursor, app.cursor, app.setup_cursor = 2, 3, 4
+        for width, height in ((40, 12), (76, 30), (120, 30)):
+            screen = Screen(height, width)
+            for key, label, title in (('1', 'SETUP', 'RUN SETUP'), ('2', 'REPOS', 'GITHUB REPOSITORIES'),
+                                      ('3', 'RUN', 'YOUR FIX BUDDY'), ('4', 'ISSUES', 'OPEN ISSUES')):
+                with self.subTest(width=width, key=key):
+                    app.handle_key(screen, ord(key))
+                    app.draw(screen)
+                    header = ''.join(text for y, _, text, _ in screen.writes if y == 0)
+                    self.assertIn(f'[{key}] {label}', header)
+                    self.assertIn(title, screen.content())
+                    if width >= 76:
+                        self.assertLess(header.index('[1] SETUP'), header.index('[2] REPOS'))
+                        self.assertLess(header.index('[2] REPOS'), header.index('[3] RUN'))
+                        self.assertLess(header.index('[3] RUN'), header.index('[4] ISSUES'))
+            for key, label in (('1', 'SETUP'), ('2', 'REPOS'), ('3', 'RUN'), ('4', 'ISSUES')):
+                app.handle_key(screen, 9)
+                app.draw(screen)
+                header = ''.join(text for y, _, text, _ in screen.writes if y == 0)
+                self.assertIn(f'[{key}] {label}', header)
+        self.assertEqual(app.selected, {7})
+        self.assertEqual(app.preview_key, preview_key)
+        self.assertEqual((app.repo_cursor, app.cursor, app.setup_cursor), (2, 3, 4))
+
+    def test_remapped_keys_keep_repository_selection_issue_actions_and_run_log(self):
+        from test_buddy_ui import Screen
+        app = tui.TerminalApp(Path('/bin/fixbuddy'), tui.Settings(repo='acme/app', project='/tmp/app'))
+        app.catalog = [tui.RepoRecord('acme/app', False, False, True, status='ok', issues=[
+            tui.IssueRecord('acme/app', 7, 'Selected issue', [])])]
+        screen = Screen(30, 120)
+        app.handle_key(screen, ord('1'))
+        app.setup_cursor = 6
+        app.handle_key(screen, tui.curses.KEY_RIGHT)
+        self.assertTrue(app.settings.auto_merge)
+        app.handle_key(screen, ord('2'))
+        app.handle_key(screen, 10)
+        app.draw(screen)
+        self.assertIn('OPEN ISSUES', screen.content())
+        app.handle_key(screen, ord(' '))
+        self.assertEqual(app.selected, {7})
+        app.handle_key(screen, 10)
+        self.assertEqual(app.dialog, 'detail')
+        app.handle_key(screen, ord('1'))
+        self.assertEqual(app.dialog, 'detail')
+        app.handle_key(screen, 27)
+        app.handle_key(screen, ord('3'))
+        app.handle_key(screen, ord('d'))
+        app.draw(screen)
+        self.assertIn('RUN HISTORY', screen.content())
+        self.assertEqual(app.selected, {7})
+
+    def test_menu_navigation_keeps_active_pipeline_guards_and_explicit_interrupt(self):
+        from test_buddy_ui import Screen
+        app = tui.TerminalApp(Path('/bin/fixbuddy'), tui.Settings(repo='acme/app', project='/tmp/app'))
+        app.process = mock.Mock()
+        app.process.poll.return_value = None
+        app.selected = {7}
+        screen = Screen(30, 120)
+        with mock.patch.object(tui.subprocess, 'Popen') as popen, mock.patch.object(tui.subprocess, 'run') as run:
+            for key in '1234':
+                app.handle_key(screen, ord(key))
+                app.handle_key(screen, ord('g'))
+                self.assertEqual(app.notice, 'A run is already active')
+                self.assertEqual(app.dialog, '')
+                app.handle_key(screen, ord('r'))
+                self.assertTrue(app.handle_key(screen, ord('q')))
+            popen.assert_not_called()
+            run.assert_not_called()
+        self.assertEqual(app.selected, {7})
+        app.handle_key(screen, ord('x'))
+        self.assertEqual(app.dialog, 'stop')
+        app.handle_key(screen, ord('n'))
+        app.process.send_signal.assert_not_called()
+        app.handle_key(screen, ord('x'))
+        app.handle_key(screen, ord('y'))
+        app.process.send_signal.assert_called_once_with(tui.signal.SIGINT)
+
+    def test_run_links_use_the_remapped_menu_numbers(self):
+        from test_buddy_ui import Screen
+        app = tui.TerminalApp(Path('/bin/fixbuddy'), tui.Settings())
+        app.tab = 3
+        screen = Screen(30, 120)
+        app.draw(screen)
+        text = screen.content()
+        self.assertIn('[4] Review the issue queue', text)
+        self.assertIn('[1] Agents and settings', text)
+        self.assertIn('ACTIVITY · [3] history', text)
+        self.assertIn('[4] issues · [1] setup', text)
+        app.process = mock.Mock()
+        app.events.put(('exit', 0))
+        app.drain_events()
+        app.draw(screen)
+        self.assertIn('Review the summary · [3] RUN', screen.content())
+
     def test_paginated_repo_catalog_includes_private_and_collaborator_repos(self):
         pages = json.dumps([
             [{"full_name": "Codevena/alpha", "private": False, "archived": False, "has_issues": True}],
@@ -167,6 +282,7 @@ class TerminalUiTests(unittest.TestCase):
 
     def test_global_inventory_renders_in_narrow_and_wide_ptys(self):
         for columns, rows, expected in ((40, 12, b"GITHUB REPOSITORIES"),
+                                        (76, 30, b"GITHUB REPOSITORIES"),
                                         (120, 32, b"REPOSITORY")):
             with self.subTest(columns=columns):
                 with tempfile.TemporaryDirectory() as home:
@@ -174,12 +290,14 @@ class TerminalUiTests(unittest.TestCase):
                     fcntl.ioctl(slave, termios.TIOCSWINSZ,
                                 struct.pack("HHHH", rows, columns, 0, 0))
                     env = dict(os.environ, TERM="xterm-256color", PYTHONDONTWRITEBYTECODE="1",
-                               HOME=home, PATH=f"{ROOT / 'tests' / 'stubs'}:{os.environ['PATH']}")
+                               HOME=home, FIXBUDDY_SELF=str(ROOT / 'fixbuddy'),
+                               PATH=f"{ROOT / 'tests' / 'stubs'}:{os.environ['PATH']}")
                     def child_setup():
                         os.setsid()
                         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
                     process = subprocess.Popen(
-                        [str(ROOT / "fixbuddy")],
+                        [sys.executable, str(ROOT / 'src' / 'tui.py'),
+                         '--repo', 'acme/app', '--project', '/tmp/app'],
                         stdin=slave, stdout=slave, stderr=slave, env=env,
                         preexec_fn=child_setup,
                     )
@@ -203,11 +321,16 @@ class TerminalUiTests(unittest.TestCase):
                         self.assertTrue(sent_quit, (len(data), expected in data, b"acme/app" in data,
                                                     process.poll(), data[-300:]))
                         self.assertIn(b"FIX BUDDY", data)
+                        self.assertIn(b'[2] REPOS', data)
                         self.assertEqual(process.wait(timeout=2), 0, data[-500:])
                     finally:
                         if process.poll() is None:
                             process.terminate()
-                            process.wait(timeout=2)
+                            try:
+                                process.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait(timeout=2)
                         os.close(master)
 
     def test_failed_run_check_keeps_global_queue_but_clears_selection(self):

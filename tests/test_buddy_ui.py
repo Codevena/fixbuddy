@@ -54,7 +54,7 @@ class BuddyUITests(unittest.TestCase):
                     screen = Screen(height, width)
                     self.app.draw(screen)
                     self.assertIn('ACTIVITY', screen.content())
-                    self.assertIn(f'[{tab + 1}]', screen.content())
+                    self.assertIn(f'[{tui.TAB_ORDER.index(tab) + 1}]', screen.content())
                     self.assertRegex(screen.content(), r'\d{2}:\d{2}:\d{2}')
 
     def test_busy_face_sweep_and_phrase_advance_on_fake_clock(self):

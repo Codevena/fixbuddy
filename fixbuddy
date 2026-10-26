@@ -29,12 +29,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-
 CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 SEVERITIES = ("all", "critical", "high", "medium", "low")
 AGENTS = ("claude", "codex", "opencode", "agy")
 TABS = ("REPOS", "ISSUES", "SETUP", "RUN")
+TAB_ORDER = (2, 0, 3, 1)  # Display order; internal view identities stay stable.
 WORDMARK = "FIX BUDDY"
 BUDDY_PHRASES = (
     "Putting on my tiny debugging hat.",
@@ -393,7 +393,7 @@ class TerminalApp:
         self.actionable_count = 0
         self.cursor = 0
         self.setup_cursor = 0
-        self.tab = 0
+        self.tab = 0 if settings.repo and settings.project else 2
         self.dialog = ""
         self.notice = "Loading read-only GitHub inventory…"
         self.logs: list[str] = []
@@ -731,14 +731,14 @@ class TerminalApp:
         self.put(screen, 0, 1, " ◈ ", "badge", True)
         self.put(screen, 0, 6, " FIX BUDDY ", "header", True)
         if width < 72:
-            label = f" [{self.tab + 1}] {TABS[self.tab]} "
+            label = f" [{TAB_ORDER.index(self.tab) + 1}] {TABS[self.tab]} "
             self.put(screen, 0, max(20, width - len(label) - 1), label, "header", True)
             return
         x = 24
-        for index, label in enumerate(TABS):
+        for index, label in enumerate(TABS[view] for view in TAB_ORDER):
             if x + len(label) + 5 >= width - 1:
                 break
-            self.put(screen, 0, x, f" [{index + 1}] {label} ", "badge" if index == self.tab else "header", index == self.tab)
+            self.put(screen, 0, x, f" [{index + 1}] {label} ", "badge" if TAB_ORDER[index] == self.tab else "header", TAB_ORDER[index] == self.tab)
             x += len(label) + 7
         if width >= 105:
             repo = clean_display((self.run_info['repo'] if self.tab == 3 and self.run_info else
@@ -957,13 +957,13 @@ class TerminalApp:
             self.frame(screen, top, x, panel_height, right, 'WORKFLOW')
             guide = ['VERIFY → FIX → REVIEW → PR', '', 'd  Full run log',
                      'x  Interrupt safely' if running else 'g  Preview a new run',
-                     '[2] Review the issue queue', '[3] Agents and settings', '',
+                     '[4] Review the issue queue', '[1] Agents and settings', '',
                      'Each fix gets an independent review.']
             for row, line in enumerate(guide[:rows]):
                 self.put(screen, top + 1 + row, x + 2, line, 'muted', width=right - 4)
 
     def draw_activity(self, screen, width, top, height):
-        self.frame(screen, top, 2, height, width - 4, "ACTIVITY · [4] history")
+        self.frame(screen, top, 2, height, width - 4, "ACTIVITY · [3] history")
         row, remaining = top + 1, height - 2
         effect, busy = self.current_outcome(), self.busy_status()
         if effect:
@@ -974,7 +974,7 @@ class TerminalApp:
             self.put(screen, row, 4, face + label, color, True, width - 8)
             row, remaining = row + 1, remaining - 1
             if remaining > 0:
-                message = 'Check the log · no automatic retry' if stopped else 'Review the summary · [4] RUN'
+                message = 'Check the log · no automatic retry' if stopped else 'Review the summary · [3] RUN'
                 self.put(screen, row, 4, message, color, width=width - 8)
                 row, remaining = row + 1, remaining - 1
             if remaining > 1:
@@ -1019,7 +1019,7 @@ class TerminalApp:
             hints = "  Tab tabs   ↑↓ field   Enter edit   ←→ choice   g run   ? help   q quit"
         if self.tab == 3:
             hints = (" d Buddy view · ↑↓ scroll · PgUp/Dn · Home/End · x interrupt · q quit" if self.run_details else
-                     " d full log · [2] issues · [3] setup · g preview · x interrupt · q quit")
+                     " d full log · [4] issues · [1] setup · g preview · x interrupt · q quit")
         if width < 76:
             hints = (" ↑↓ Enter repo · [1–4] tabs · g run · q", " Space select · Enter detail · g · q",
                      " ↑↓ Enter edit · ←→ · [1–4] · g · q",
@@ -1153,10 +1153,10 @@ class TerminalApp:
                 return True
             return False
         if key in (9,):
-            self.tab = (self.tab + 1) % 4
+            self.tab = TAB_ORDER[(TAB_ORDER.index(self.tab) + 1) % len(TAB_ORDER)]
             return True
         if key in (ord("1"), ord("2"), ord("3"), ord("4")):
-            self.tab = key - ord("1")
+            self.tab = TAB_ORDER[key - ord("1")]
             return True
         if key in (ord("r"), ord("R")):
             if self.process is None or self.process.poll() is not None:

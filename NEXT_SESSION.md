@@ -1,16 +1,24 @@
 # Next session
 
-## Active menu change — 2026-10-26
+## Delivered menu change — 2026-10-26
 
 User requested ScoutBuddy's menu order:1SETUP →2REPOS →3RUN →4ISSUES.
-Local branch feat/scout-style-menu, commit18082b1 based on main c75caab.
+Explicit instruction: "merge push und installiere". Product18082b1 and preparation
+handoff f9d898b are fast-forwarded to main and pushed; feature branch safely deleted.
 42 UI/PTY tests, generated bundle/source equality, Bash syntax, version0.9.4,
 SHA256SUMS and independent six actual PTY cases40/76/120 PASS0C/0W.
 Bundle156996bytes SHA256c1775d0d29b73f124834a7fe7ec5359a5c6fce3df84ea75d044c8f1f67f15b30.
 Review docs/dev/2026-10-26-scout-menu-review.md. No pipeline/authority change.
-Preserve user-owned untracked review-todo.md. No new push/merge/install/release
-permission. The historical candidate authorizations below are not current consent.
-Next executable step: obtain concrete delivery approval for this finished change.
+CI40297344504 on f9d898b succeeded:42 Python tests, ShellCheck/Bash/bundle checks,
+both CI jobs green. After zero app/fix processes and open state handles, installed
+atomically at2026-10-26T10:12:14+01:00 in ~/.local/bin/fixbuddy. Version/help/0755
+and source/checksum equality verified;104 existing config/run-history entries
+byte/mode-identical. Private backup ~/.fixbuddy/backups/before-scout-menu-2026-10-26-101124-c75caab
+contains old executable, complete runs, manifest.json and installed-result.json.
+No live agent/GitHub issue calls, tag/release or installer-pin changes. Preserve
+user-owned untracked review-todo.md and unrelated existing worktree/branch.
+No next implementation step; start fixbuddy to use the new menu.
+Historical release-candidate permissions below are not new consent.
 
 ## v0.9.4 release candidate — 2026-09-30
 
